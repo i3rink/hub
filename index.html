@@ -1,0 +1,567 @@
+<!-- Hub v1.0.0 - deployed 6 Nov 2026 -->
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Hub</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --card: #ffffff; --ink: #111827; --ink-2: #4b5563; --muted: #6b7280;
+    --line: #e5e7eb; --line-2: #f1f2f4; --brand: #1d4ed8; --brand-faint: #eff4ff;
+    --bar: #3b6fd9; --amber: #92400e; --amber-faint: #fef3c7; --red: #b91c1c;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    position: relative; background: var(--bg); color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 14px; line-height: 1.45; -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 16px; }
+  .app-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; }
+  .app-name { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
+  .app-ver { font-size: 12px; color: var(--muted); }
+  .app-sub { color: var(--muted); margin: 0 0 16px; }
+
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+  .card h2 { font-size: 16px; margin: 0 0 4px; }
+  .card .hint { color: var(--muted); font-size: 12px; margin: 0 0 12px; }
+  .section-title { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-2); margin: 24px 0 8px; }
+
+  .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 16px; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--card); }
+  .seg button { border: 0; background: transparent; padding: 8px 14px; font: inherit; color: var(--ink-2); cursor: pointer; }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .seg button.on { background: var(--brand); color: #fff; }
+  .nav { display: inline-flex; align-items: center; gap: 4px; }
+  .btn { border: 1px solid var(--line); background: var(--card); border-radius: 8px; padding: 8px 12px; font: inherit; color: var(--ink); cursor: pointer; }
+  .btn:hover { background: var(--line-2); }
+  .btn:disabled { opacity: 0.4; cursor: default; }
+  .period-label { font-weight: 600; min-width: 170px; text-align: center; }
+
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .tile { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+  .tile .t-label { font-size: 12px; color: var(--muted); }
+  .tile .t-value { font-size: 28px; font-weight: 700; margin: 2px 0; font-variant-numeric: tabular-nums; }
+  .tile .t-sub { font-size: 13px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  .tile .t-note { font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+  .tbl-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line-2); white-space: nowrap; }
+  th { font-size: 12px; font-weight: 600; color: var(--muted); border-bottom: 1px solid var(--line); }
+  td.num, th.num { text-align: right; }
+  tr.total td { font-weight: 700; border-top: 1px solid var(--line); border-bottom: 0; }
+  .nr { color: var(--muted); font-style: italic; }
+  .empty { color: var(--muted); padding: 8px 0; }
+  .pill { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px; background: var(--line-2); color: var(--ink-2); }
+
+  .stage-row { display: grid; grid-template-columns: minmax(150px, 1.2fr) 2fr 60px 100px 18px; align-items: center; gap: 12px;
+               padding: 8px 4px; border-bottom: 1px solid var(--line-2); cursor: pointer; }
+  .stage-row:hover { background: var(--line-2); }
+  .stage-row .s-name { font-weight: 500; }
+  .stage-row .s-bar { height: 8px; background: var(--line-2); border-radius: 4px; overflow: hidden; }
+  .stage-row .s-bar span { display: block; height: 100%; background: var(--bar); border-radius: 0 4px 4px 0; }
+  .stage-row .s-count { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .stage-row .s-val { text-align: right; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  .stage-row [data-arrow] { color: var(--muted); transition: transform 0.15s; }
+  .stage-row.open [data-arrow] { transform: rotate(90deg); }
+  .stage-jobs { padding: 4px 0 12px; }
+  .pipe-total { display: flex; gap: 24px; flex-wrap: wrap; margin-bottom: 8px; }
+  .pipe-total b { font-size: 22px; font-variant-numeric: tabular-nums; }
+
+  .gate { text-align: center; padding: 60px 16px; color: var(--ink-2); }
+  .err { background: #fef2f2; border: 1px solid #fecaca; color: var(--red); border-radius: 12px; padding: 14px 16px; margin-bottom: 16px; }
+  .loading { color: var(--muted); padding: 8px 0; }
+
+  #toast { display: none; position: absolute; left: 50%; top: 16px; transform: translateX(-50%); background: #111827; color: #fff;
+           padding: 10px 16px; border-radius: 8px; z-index: 50; font-size: 13px; }
+
+  @media (max-width: 640px) {
+    .wrap { padding: 12px; }
+    .stage-row { grid-template-columns: 1fr 50px 90px 18px; }
+    .stage-row .s-bar { display: none; }
+    .period-label { min-width: 0; }
+  }
+</style>
+</head>
+<body>
+  <div class="wrap" id="root">
+    <div class="gate" id="gate">Open Hub from Helm to see your dashboard.</div>
+  </div>
+  <div id="toast"></div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════
+   Hub: the dashboard app for HELM.
+   v1.0.0 holds the Exec view only, for super admins (permitted_modules includes 'admin').
+   Read only. Reads Scout leads and lead_activity. Writes nothing except its module_versions row.
+   Planned: lands first after the PIN, announcements, department messages, a view per role.
+   ═══════════════════════════════════════════════════════════════════ */
+const APP_VERSION = 'v1.0.0';
+const MODULE_KEY  = 'hub';
+
+/* ── Scout project (read only) ── */
+const SCOUT_URL = 'https://vrujksjomkvbgwxbywzx.supabase.co';
+const SCOUT_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZydWprc2pvbWt2Ymd3eGJ5d3p4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUyNTAxODUsImV4cCI6MjEwMDgyNjE4NX0.WAnLBFU7YXfJWHe6k_WjQzszMEgAJP0UbzuAim43GP4';
+
+async function sbScout(path, opts = {}) {
+  const { prefer, ...fetchOpts } = opts;
+  const res = await fetch(`${SCOUT_URL}/rest/v1/${path}`, {
+    headers: {
+      'apikey': SCOUT_KEY,
+      'Authorization': `Bearer ${SCOUT_KEY}`,
+      'Content-Type': 'application/json',
+      ...(prefer ? { 'Prefer': prefer } : {}),
+    },
+    ...fetchOpts,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || `SB error ${res.status}`);
+  }
+  const text = await res.text();
+  return text ? JSON.parse(text) : null;
+}
+const scoutGet = (table, qs = '') => sbScout(`${table}?${qs}`);
+
+/* ── Version reporting to Helm ── */
+fetch('https://xjnrmltfruzwmnhxplzn.supabase.co/rest/v1/module_versions', {
+  method: 'POST',
+  headers: {
+    'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhqbnJtbHRmcnV6d21uaHhwbHpuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUzMzMxNTAsImV4cCI6MjEwMDkwOTE1MH0.oDGbg7nGByR2ppjn8tYhTAz3tjUjPQkegbu40OH6Oq8',
+    'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhqbnJtbHRmcnV6d21uaHhwbHpuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUzMzMxNTAsImV4cCI6MjEwMDkwOTE1MH0.oDGbg7nGByR2ppjn8tYhTAz3tjUjPQkegbu40OH6Oq8',
+    'Content-Type': 'application/json',
+    'Prefer': 'resolution=merge-duplicates',
+  },
+  body: JSON.stringify({ module: MODULE_KEY, version: APP_VERSION, updated_at: new Date().toISOString() }),
+}).catch(() => {});
+
+/* ── Helpers ── */
+function g(id) { return document.getElementById(id); }
+function esc(str) {
+  return String(str ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+function toast(msg, type = '') {
+  const el = g('toast');
+  el.textContent = msg;
+  el.className = 'toast ' + type;
+  el.style.display = 'block';
+  setTimeout(() => { el.style.display = 'none'; }, 3000);
+}
+const NR = '<span class="nr">Not recorded</span>';
+function money(n) {
+  return '£' + Math.round(Number(n) || 0).toLocaleString('en-GB');
+}
+function moneyOrNr(n) { return n == null || n === '' ? NR : esc(money(n)); }
+function dateShort(iso) {
+  if (!iso) return NR;
+  const d = new Date(iso);
+  if (isNaN(d)) return NR;
+  return esc(d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }));
+}
+function dateTime(iso) {
+  if (!iso) return NR;
+  const d = new Date(iso);
+  return esc(d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) + ' ' +
+             d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }));
+}
+function custName(l) {
+  const n = [l.first_name, l.last_name].filter(Boolean).join(' ').trim();
+  return n || 'No name';
+}
+function jobId(l) { return l.job_id ? esc(l.job_id) : NR; }
+function surveyor(l) { return l.salesperson ? esc(l.salesperson) : NR; }
+function surveyDate(l) { return l.survey_at || l.survey_done_at || null; }
+function daysBetween(a, b) {
+  if (!a || !b) return null;
+  const ms = new Date(b) - new Date(a);
+  if (isNaN(ms) || ms < 0) return null;
+  return Math.round(ms / 86400000);
+}
+function sumValues(rows) {
+  let total = 0, missing = 0;
+  rows.forEach(r => { if (r.quote_total == null) missing++; else total += Number(r.quote_total) || 0; });
+  return { total, missing };
+}
+function missingNote(missing) {
+  return missing ? `${missing} with no value recorded, not in the £ total` : '';
+}
+function chunk(arr, size) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+/* Leads not archived. Treat a blank archived as not archived */
+const NOT_ARCHIVED = 'or=(archived.is.false,archived.is.null)';
+
+/* ── Pipeline stages, in pipeline order. Unknown statuses are added at the end ── */
+const STAGES = [
+  ['assigned_to_surveyor',            'Assigned to surveyor'],
+  ['survey_booked',                   'Survey booked'],
+  ['survey_complete',                 'Survey complete'],
+  ['survey_cancelled',                'Survey cancelled'],
+  ['quote_in_progress',               'Quote in progress'],
+  ['quote_requires_manager_approval', 'Quote needs manager approval'],
+  ['quote_submitted',                 'Quote submitted'],
+  ['quote_accepted',                  'Quote accepted'],
+  ['install_date_confirmed',          'Install date confirmed'],
+  ['install_team_assigned',           'Install team assigned'],
+  ['install_in_progress',             'Install in progress'],
+  ['install_complete',                'Install complete'],
+  ['snagging_reported',               'Snagging reported'],
+  ['job_complete',                    'Job complete'],
+  ['lost',                            'Lost'],
+];
+const STAGE_LABEL = Object.fromEntries(STAGES);
+function stageLabel(s) {
+  if (!s) return 'No stage';
+  return STAGE_LABEL[s] || String(s).replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
+}
+
+/* ── State ── */
+const state = {
+  user: null,
+  period: 'week',
+  anchor: new Date(),
+  seq: 0,
+  periodData: null,
+  periodError: '',
+  pipe: null,
+  pipeError: '',
+  openStage: null,
+  stageJobs: {},
+};
+
+/* ── Period ranges (local UK time). Weeks run Monday to Sunday ── */
+function startOfDay(d) { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; }
+function periodRange(period, anchor) {
+  const a = startOfDay(anchor);
+  let start, end;
+  if (period === 'day') {
+    start = a; end = new Date(a); end.setDate(end.getDate() + 1);
+  } else if (period === 'week') {
+    const dow = (a.getDay() + 6) % 7;
+    start = new Date(a); start.setDate(a.getDate() - dow);
+    end = new Date(start); end.setDate(start.getDate() + 7);
+  } else {
+    start = new Date(a.getFullYear(), a.getMonth(), 1);
+    end = new Date(a.getFullYear(), a.getMonth() + 1, 1);
+  }
+  return { start, end };
+}
+function periodLabel(period, anchor) {
+  const { start, end } = periodRange(period, anchor);
+  if (period === 'day') return start.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' });
+  if (period === 'month') return start.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+  const last = new Date(end); last.setDate(end.getDate() - 1);
+  return start.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) + ' to ' +
+         last.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+function shiftAnchor(dir) {
+  const a = new Date(state.anchor);
+  if (state.period === 'day') a.setDate(a.getDate() + dir);
+  else if (state.period === 'week') a.setDate(a.getDate() + 7 * dir);
+  else a.setMonth(a.getMonth() + dir, 1);
+  state.anchor = a;
+}
+function isCurrentPeriod() {
+  const now = periodRange(state.period, new Date());
+  const cur = periodRange(state.period, state.anchor);
+  return now.start.getTime() === cur.start.getTime();
+}
+
+/* ── Data: period figures ── */
+const LEAD_COLS = 'id,job_id,first_name,last_name,salesperson,status,survey_at,survey_done_at,quote_sent_at,quote_accepted_at,quote_total,install_at';
+
+async function leadsByIds(ids) {
+  const out = [];
+  for (const part of chunk(ids, 80)) {
+    const rows = await scoutGet('leads', `select=${LEAD_COLS}&id=in.(${part.join(',')})`);
+    out.push(...(rows || []));
+  }
+  return out;
+}
+async function installNotesFor(ids, extraQs) {
+  const out = [];
+  for (const part of chunk(ids, 80)) {
+    const rows = await scoutGet('lead_activity',
+      `select=lead_id,created_at&activity_type=eq.install_confirmed&lead_id=in.(${part.join(',')})${extraQs || ''}&order=created_at.asc`);
+    out.push(...(rows || []));
+  }
+  return out;
+}
+
+async function loadPeriod() {
+  const seq = ++state.seq;
+  state.periodData = null; state.periodError = '';
+  render();
+  const { start, end } = periodRange(state.period, state.anchor);
+  const s = encodeURIComponent(start.toISOString());
+  const e = encodeURIComponent(end.toISOString());
+  try {
+    const [quoted, converted, bookNotes] = await Promise.all([
+      scoutGet('leads', `select=${LEAD_COLS}&quote_sent_at=gte.${s}&quote_sent_at=lt.${e}&order=quote_sent_at.asc`),
+      scoutGet('leads', `select=${LEAD_COLS}&quote_accepted_at=gte.${s}&quote_accepted_at=lt.${e}&order=quote_accepted_at.asc`),
+      scoutGet('lead_activity', `select=lead_id,created_at&activity_type=eq.install_confirmed&created_at=gte.${s}&created_at=lt.${e}&order=created_at.asc`),
+    ]);
+
+    /* Installs booked: the first install_confirmed note per job. A rebooking of a job first booked earlier is left out */
+    const firstInPeriod = new Map();
+    (bookNotes || []).forEach(n => { if (n.lead_id && !firstInPeriod.has(n.lead_id)) firstInPeriod.set(n.lead_id, n.created_at); });
+    let bookIds = [...firstInPeriod.keys()];
+    if (bookIds.length) {
+      const earlier = await installNotesFor(bookIds, `&created_at=lt.${s}`);
+      const bookedBefore = new Set(earlier.map(n => n.lead_id));
+      bookIds = bookIds.filter(id => !bookedBefore.has(id));
+    }
+    const bookedLeads = bookIds.length ? await leadsByIds(bookIds) : [];
+    const booked = bookedLeads.map(l => ({ ...l, booked_at: firstInPeriod.get(l.id) }))
+      .sort((a, b) => new Date(a.booked_at) - new Date(b.booked_at));
+
+    /* Install booked date for converted jobs (first note ever) */
+    const convIds = (converted || []).map(l => l.id);
+    const firstBooked = new Map();
+    if (convIds.length) {
+      (await installNotesFor(convIds)).forEach(n => { if (!firstBooked.has(n.lead_id)) firstBooked.set(n.lead_id, n.created_at); });
+    }
+    const conv = (converted || []).map(l => ({ ...l, booked_at: firstBooked.get(l.id) || null }));
+
+    if (seq !== state.seq) return;
+    state.periodData = { quoted: quoted || [], converted: conv, booked };
+  } catch (err) {
+    if (seq !== state.seq) return;
+    state.periodError = err.message || 'Could not load figures';
+  }
+  render();
+}
+
+/* ── Data: pipeline now ── */
+async function loadPipeline() {
+  state.pipe = null; state.pipeError = '';
+  render();
+  try {
+    /* Two columns only. Counted here because PostgREST cannot group without a database function */
+    const rows = await scoutGet('leads', `select=status,quote_total&${NOT_ARCHIVED}`);
+    const by = new Map();
+    (rows || []).forEach(r => {
+      const k = r.status || '';
+      if (!by.has(k)) by.set(k, { count: 0, value: 0, missing: 0 });
+      const b = by.get(k);
+      b.count++;
+      if (r.quote_total == null) b.missing++; else b.value += Number(r.quote_total) || 0;
+    });
+    const order = STAGES.map(s => s[0]);
+    const keys = [...order.filter(k => by.has(k)), ...[...by.keys()].filter(k => !order.includes(k))];
+    state.pipe = { total: (rows || []).length, stages: keys.map(k => ({ key: k, ...by.get(k) })) };
+  } catch (err) {
+    state.pipeError = err.message || 'Could not load the pipeline';
+  }
+  render();
+}
+async function loadStageJobs(stage) {
+  state.stageJobs[stage] = { loading: true };
+  render();
+  try {
+    const statusQs = stage ? `status=eq.${encodeURIComponent(stage)}` : 'status=is.null';
+    const rows = await scoutGet('leads',
+      `select=id,job_id,first_name,last_name,salesperson,survey_at,survey_done_at,quote_sent_at,quote_total,created_at&${statusQs}&${NOT_ARCHIVED}&order=created_at.desc&limit=300`);
+    state.stageJobs[stage] = { rows: rows || [] };
+  } catch (err) {
+    state.stageJobs[stage] = { error: err.message || 'Could not load jobs' };
+  }
+  render();
+}
+
+/* ── Render ── */
+function render() {
+  const root = g('root');
+  if (!state.user) { root.innerHTML = '<div class="gate">Open Hub from Helm to see your dashboard.</div>'; return; }
+  const mods = state.user.permitted_modules || [];
+  if (!mods.includes('admin')) {
+    root.innerHTML = head() + `<div class="gate">Hi ${esc((state.user.name || '').split(' ')[0])}. Your dashboard is on its way.</div>`;
+    return;
+  }
+  root.innerHTML = head() + renderPeriod() + renderPipeline();
+}
+function head() {
+  return `<div class="app-head"><div class="app-name">Hub</div><div class="app-ver">${esc(APP_VERSION)}</div></div>`;
+}
+
+function renderPeriod() {
+  const p = state.period;
+  const seg = ['day', 'week', 'month'].map(k =>
+    `<button data-action="period" data-period="${k}" class="${p === k ? 'on' : ''}">${k[0].toUpperCase() + k.slice(1)}</button>`).join('');
+  let html = `<div class="section-title">This period</div>
+    <div class="controls">
+      <div class="seg">${seg}</div>
+      <div class="nav">
+        <button class="btn" data-action="prev" aria-label="Previous">&#8249;</button>
+        <div class="period-label">${esc(periodLabel(p, state.anchor))}</div>
+        <button class="btn" data-action="next" aria-label="Next" ${isCurrentPeriod() ? 'disabled' : ''}>&#8250;</button>
+      </div>
+      ${isCurrentPeriod() ? '' : '<button class="btn" data-action="today">Back to now</button>'}
+    </div>`;
+  if (state.periodError) {
+    return html + `<div class="err">Could not load the figures: ${esc(state.periodError)} <button class="btn" data-action="retry-period">Try again</button></div>`;
+  }
+  const d = state.periodData;
+  if (!d) return html + '<div class="loading">Loading figures</div>';
+
+  const q = sumValues(d.quoted), c = sumValues(d.converted), b = sumValues(d.booked);
+  const days = d.converted.map(l => daysBetween(surveyDate(l), l.quote_accepted_at)).filter(x => x != null);
+  const avgDays = days.length ? Math.round(days.reduce((a, x) => a + x, 0) / days.length) : null;
+  const rateN = d.quoted.length ? Math.round((d.converted.length / d.quoted.length) * 100) + '%' : 'No quotes';
+  const rateV = q.total ? Math.round((c.total / q.total) * 100) + '%' : 'No value';
+
+  html += `<div class="tiles">
+    ${tile('Installs booked', d.booked.length, money(b.total), missingNote(b.missing))}
+    ${tile('Converted (quote accepted)', d.converted.length, money(c.total), missingNote(c.missing))}
+    ${tile('Quotes sent', d.quoted.length, money(q.total), missingNote(q.missing))}
+    ${tile('Converted against quoted', rateN, 'By value ' + rateV, 'Jobs accepted this period against quotes sent this period')}
+    ${tile('Survey to sale', avgDays == null ? 'No data' : avgDays + ' days', 'Average', days.length + ' of ' + d.converted.length + ' with a survey date')}
+  </div>`;
+
+  html += card('Installs booked', 'Jobs whose install was first booked in this period, from Scout\'s install confirmed note.',
+    table(['Booked on', 'Job ID', 'Customer', 'Surveyor', 'Install date', ['Value', 'num']],
+      d.booked.map(l => [dateTime(l.booked_at), jobId(l), esc(custName(l)), surveyor(l), dateShort(l.install_at), [moneyOrNr(l.quote_total), 'num']]),
+      d.booked.length ? ['Total', d.booked.length + ' jobs', '', '', '', [esc(money(b.total)), 'num']] : null));
+
+  html += card('Converted', 'Jobs moved to Quote Accepted in this period. Days counts from the survey date to the accepted date.',
+    table(['Job ID', 'Customer', 'Surveyor', 'Survey', 'Accepted', ['Days', 'num'], 'Install booked', 'Stage now', ['Value', 'num']],
+      d.converted.map(l => {
+        const dd = daysBetween(surveyDate(l), l.quote_accepted_at);
+        return [jobId(l), esc(custName(l)), surveyor(l), dateShort(surveyDate(l)), dateShort(l.quote_accepted_at),
+                [dd == null ? NR : String(dd), 'num'], l.booked_at ? dateShort(l.booked_at) : '<span class="nr">Not yet</span>',
+                `<span class="pill">${esc(stageLabel(l.status))}</span>`, [moneyOrNr(l.quote_total), 'num']];
+      }),
+      d.converted.length ? ['Total', d.converted.length + ' jobs', '', '', '', '', '', '', [esc(money(c.total)), 'num']] : null));
+
+  html += card('Quotes sent', 'Jobs whose latest quote was emailed in this period. A quote sent again moves to the newer date.',
+    table(['Sent', 'Job ID', 'Customer', 'Surveyor', 'Stage now', ['Value', 'num']],
+      d.quoted.map(l => [dateShort(l.quote_sent_at), jobId(l), esc(custName(l)), surveyor(l),
+                         `<span class="pill">${esc(stageLabel(l.status))}</span>`, [moneyOrNr(l.quote_total), 'num']]),
+      d.quoted.length ? ['Total', d.quoted.length + ' quotes', '', '', '', [esc(money(q.total)), 'num']] : null));
+
+  html += card('By surveyor', 'The salesperson on each job. Values only count jobs with a value recorded.', renderBySurveyor(d));
+  return html;
+}
+
+function renderBySurveyor(d) {
+  const m = new Map();
+  const row = name => {
+    const k = name || '';
+    if (!m.has(k)) m.set(k, { name: k, q: 0, qv: 0, c: 0, cv: 0, b: 0, bv: 0 });
+    return m.get(k);
+  };
+  d.quoted.forEach(l => { const r = row(l.salesperson); r.q++; r.qv += Number(l.quote_total) || 0; });
+  d.converted.forEach(l => { const r = row(l.salesperson); r.c++; r.cv += Number(l.quote_total) || 0; });
+  d.booked.forEach(l => { const r = row(l.salesperson); r.b++; r.bv += Number(l.quote_total) || 0; });
+  const rows = [...m.values()].sort((a, b) => b.cv - a.cv || b.q - a.q);
+  return table(['Surveyor', ['Quotes', 'num'], ['£ quoted', 'num'], ['Converted', 'num'], ['£ converted', 'num'], ['Installs booked', 'num'], ['£ booked', 'num']],
+    rows.map(r => [r.name ? esc(r.name) : NR, [String(r.q), 'num'], [esc(money(r.qv)), 'num'], [String(r.c), 'num'],
+                   [esc(money(r.cv)), 'num'], [String(r.b), 'num'], [esc(money(r.bv)), 'num']]), null);
+}
+
+function renderPipeline() {
+  let html = '<div class="section-title">Pipeline now</div>';
+  if (state.pipeError) return html + `<div class="err">Could not load the pipeline: ${esc(state.pipeError)} <button class="btn" data-action="retry-pipe">Try again</button></div>`;
+  const p = state.pipe;
+  if (!p) return html + '<div class="loading">Loading pipeline</div>';
+  const max = Math.max(1, ...p.stages.map(s => s.count));
+  const totVal = p.stages.reduce((a, s) => a + s.value, 0);
+  html += `<div class="card">
+    <div class="pipe-total"><div><div class="hint">Leads in Scout (not archived)</div><b>${p.total.toLocaleString('en-GB')}</b></div>
+    <div><div class="hint">Quoted value across them</div><b>${esc(money(totVal))}</b></div></div>
+    <p class="hint">Tap a stage to list its jobs. Value is the last quote emailed, where one was recorded.</p>`;
+  p.stages.forEach(s => {
+    const open = state.openStage === s.key;
+    html += `<div class="stage-row ${open ? 'open' : ''}" data-action="stage" data-stage="${esc(s.key)}">
+      <div class="s-name">${esc(stageLabel(s.key))}</div>
+      <div class="s-bar"><span style="width:${(s.count / max * 100).toFixed(1)}%"></span></div>
+      <div class="s-count">${s.count}</div>
+      <div class="s-val">${s.value ? esc(money(s.value)) : ''}</div>
+      <div data-arrow>&#8250;</div>
+    </div>`;
+    if (open) html += `<div class="stage-jobs">${renderStageJobs(s.key)}</div>`;
+  });
+  return html + '</div>';
+}
+function renderStageJobs(stage) {
+  const sj = state.stageJobs[stage];
+  if (!sj || sj.loading) return '<div class="loading">Loading jobs</div>';
+  if (sj.error) return `<div class="err">${esc(sj.error)}</div>`;
+  const note = sj.rows.length === 300 ? '<p class="hint">Showing the newest 300.</p>' : '';
+  return note + table(['Job ID', 'Customer', 'Surveyor', 'Survey', 'Quote sent', 'Lead added', ['Value', 'num']],
+    sj.rows.map(l => [jobId(l), esc(custName(l)), surveyor(l), dateShort(surveyDate(l)),
+                      l.quote_sent_at ? dateShort(l.quote_sent_at) : '<span class="nr">Not sent</span>',
+                      dateShort(l.created_at), [moneyOrNr(l.quote_total), 'num']]), null);
+}
+
+function tile(label, value, sub, note) {
+  return `<div class="tile"><div class="t-label">${esc(label)}</div><div class="t-value">${esc(value)}</div>
+    <div class="t-sub">${esc(sub || '')}</div>${note ? `<div class="t-note">${esc(note)}</div>` : ''}</div>`;
+}
+function card(title, hint, body) {
+  return `<div class="card"><h2>${esc(title)}</h2><p class="hint">${esc(hint)}</p>${body}</div>`;
+}
+/* Cells are already escaped HTML. A cell given as [html, 'num'] is right-aligned */
+function table(headers, rows, totalRow) {
+  if (!rows.length) return '<div class="empty">None in this period.</div>';
+  const th = headers.map(h => Array.isArray(h) ? `<th class="${h[1]}">${esc(h[0])}</th>` : `<th>${esc(h)}</th>`).join('');
+  const tr = cells => cells.map(c => Array.isArray(c) ? `<td class="${c[1]}">${c[0]}</td>` : `<td>${c}</td>`).join('');
+  const body = rows.map(r => `<tr>${tr(r)}</tr>`).join('');
+  const tot = totalRow ? `<tr class="total">${tr(totalRow.map(c => Array.isArray(c) ? c : esc(c)))}</tr>` : '';
+  return `<div class="tbl-wrap"><table><thead><tr>${th}</tr></thead><tbody>${body}${tot}</tbody></table></div>`;
+}
+
+/* ── Events ── */
+document.addEventListener('click', e => {
+  const btn = e.target.closest('[data-action]');
+  if (!btn || btn.disabled) return;
+  const a = btn.dataset.action;
+  if (a === 'period') { state.period = btn.dataset.period; state.anchor = new Date(); loadPeriod(); }
+  else if (a === 'prev') { shiftAnchor(-1); loadPeriod(); }
+  else if (a === 'next') { if (!isCurrentPeriod()) { shiftAnchor(1); loadPeriod(); } }
+  else if (a === 'today') { state.anchor = new Date(); loadPeriod(); }
+  else if (a === 'retry-period') loadPeriod();
+  else if (a === 'retry-pipe') loadPipeline();
+  else if (a === 'stage') {
+    const st = btn.dataset.stage;
+    if (state.openStage === st) { state.openStage = null; render(); return; }
+    state.openStage = st;
+    try { history.pushState({ page: 'stage' }, ''); } catch (err) {}
+    loadStageJobs(st);
+  }
+});
+
+/* Android back closes an open stage list */
+try { history.replaceState({ page: 'home' }, ''); } catch (e) {}
+window.addEventListener('popstate', () => {
+  try { state.openStage = null; render(); } catch (err) {}
+});
+
+/* ── Helm hands over the signed-in user ── */
+window.addEventListener('message', e => {
+  if (e.origin !== 'https://i3rink.github.io') return;
+  const msg = e.data || {};
+  if (msg.type !== 'HELM_USER' || !msg.user) return;
+  const first = !state.user || state.user.id !== msg.user.id;
+  state.user = msg.user;
+  if (first && (state.user.permitted_modules || []).includes('admin')) {
+    state.anchor = new Date(); state.openStage = null; state.stageJobs = {};
+    loadPeriod();
+    loadPipeline();
+  } else {
+    render();
+  }
+});
+</script>
+</body>
+</html>
