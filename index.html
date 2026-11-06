@@ -1,4 +1,4 @@
-<!-- Hub v1.2.0 - deployed 6 Nov 2026 -->
+<!-- Hub v1.2.1 - deployed 6 Nov 2026 -->
 <!DOCTYPE html>
 <html lang="en-GB">
 <head>
@@ -145,6 +145,9 @@
   .pie-row b { text-align: right; font-variant-numeric: tabular-nums; }
   .pie-row em { text-align: right; font-style: normal; color: var(--muted); font-variant-numeric: tabular-nums; }
   .data-note { font-size: 12px; color: var(--muted); margin: 8px 2px 14px; }
+  .switch { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; cursor: pointer; }
+  .switch input { width: 16px; height: 16px; accent-color: var(--ink); cursor: pointer; }
+  .switch em { font-style: normal; color: var(--muted); font-size: 12px; }
   .t-none { font-size: 20px; color: var(--muted); font-weight: 500; }
   .tiles .tile .t-label { min-height: 18px; }
 </style>
@@ -165,7 +168,7 @@
    Super admins (admin) can open every view. Only the CEO view is built so far.
    Read only. Reads Scout leads and lead_activity. Writes nothing except its module_versions row.
    ═══════════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v1.2.0';
+const APP_VERSION = 'v1.2.1';
 const MODULE_KEY  = 'hub';
 
 /* ── Scout project (read only) ── */
@@ -317,7 +320,20 @@ const state = {
   stageJobs: {},
   show: { closed: false, quoted: false },
   views: {},
+  hideAirtable: true,
 };
+
+/* ── Airtable imports. Every lead created before Scout went live (Jan to Aug 2026) carries
+   airtable_record_id, and no lead created since does (checked 6 Nov 2026). Hidden from the pipeline by default ── */
+function prefKey(name) { return 'hub.' + name + '.' + ((state.user && state.user.id) || 'anon'); }
+function loadHideAirtable() {
+  let v = null;
+  try { v = localStorage.getItem(prefKey('hideAirtable')); } catch (e) {}
+  state.hideAirtable = v !== '0';
+}
+function saveHideAirtable() {
+  try { localStorage.setItem(prefKey('hideAirtable'), state.hideAirtable ? '1' : '0'); } catch (e) {}
+}
 
 /* ── Who sees what (Helm tick boxes). Super admins can open every view ── */
 function canSee(view) {
@@ -495,9 +511,20 @@ async function loadPipeline() {
   render();
   try {
     /* Two columns only. Counted here because PostgREST cannot group without a database function */
-    const rows = await scoutGet('leads', `select=status,quote_total&${NOT_ARCHIVED}`);
+    const rows = (await scoutGet('leads', `select=status,quote_total,airtable_record_id&${NOT_ARCHIVED}`)) || [];
+    state.pipeRows = rows;
+    shapePipeline();
+  } catch (err) {
+    state.pipeError = err.message || 'Could not load the pipeline';
+  }
+  render();
+}
+function shapePipeline() {
+  const rows = state.pipeRows || [];
+  const importedOpen = rows.filter(r => r.airtable_record_id && !CLOSED_STAGES.includes(r.status)).length;
+  {
     const by = new Map();
-    (rows || []).forEach(r => {
+    rows.filter(r => !(state.hideAirtable && r.airtable_record_id)).forEach(r => {
       const k = r.status || '';
       if (!by.has(k)) by.set(k, { count: 0, value: 0 });
       const b = by.get(k);
@@ -506,11 +533,8 @@ async function loadPipeline() {
     });
     const order = STAGES.map(x => x[0]);
     const keys = [...order.filter(k => by.has(k)), ...[...by.keys()].filter(k => !order.includes(k))];
-    state.pipe = { stages: keys.map(k => ({ key: k, ...by.get(k) })) };
-  } catch (err) {
-    state.pipeError = err.message || 'Could not load the pipeline';
+    state.pipe = { stages: keys.map(k => ({ key: k, ...by.get(k) })), importedOpen };
   }
-  render();
 }
 async function loadStageJobs(stage) {
   state.stageJobs[stage] = { loading: true };
@@ -518,7 +542,7 @@ async function loadStageJobs(stage) {
   try {
     const statusQs = stage ? `status=eq.${encodeURIComponent(stage)}` : 'status=is.null';
     const rows = await scoutGet('leads',
-      `select=id,job_id,first_name,last_name,salesperson,survey_at,survey_done_at,quote_sent_at,quote_total,created_at&${statusQs}&${NOT_ARCHIVED}&order=created_at.desc&limit=300`);
+      `select=id,job_id,first_name,last_name,salesperson,survey_at,survey_done_at,quote_sent_at,quote_total,created_at&${statusQs}&${NOT_ARCHIVED}${state.hideAirtable ? '&airtable_record_id=is.null' : ''}&order=created_at.desc&limit=300`);
     state.stageJobs[stage] = { rows: rows || [] };
   } catch (err) {
     state.stageJobs[stage] = { error: err.message || 'Could not load jobs' };
@@ -854,7 +878,9 @@ function renderPipeline() {
   html += `<div class="card"><div class="pipe-head">
       <div><div class="lbl">Open leads</div><div class="big">${openN.toLocaleString('en-GB')}</div></div>
       <div><div class="lbl">Quoted value of open leads</div><div class="big">${esc(money(openV))}</div></div>
-    </div><p class="hint" style="margin:4px 0 0">Every lead in Scout that isn't archived, closed or lost, however old.</p></div>`;
+    </div><p class="hint" style="margin:4px 0 8px">Every lead in Scout that isn't archived, closed or lost${state.hideAirtable ? ', created since Scout went live in August 2026' : ', including leads imported from Airtable'}.</p>
+    <label class="switch"><input type="checkbox" data-action="airtable" ${state.hideAirtable ? 'checked' : ''}/>
+      <span>Hide Airtable imports</span><em>${p.importedOpen.toLocaleString('en-GB')} open leads from January to August 2026</em></label></div>`;
   html += widgetCard(WIDGETS.split, ctx) + widgetCard(WIDGETS.stages, ctx);
   return html;
 }
@@ -917,6 +943,11 @@ document.addEventListener('click', e => {
   else if (a === 'today') { state.anchor = new Date(); loadData(); }
   else if (a === 'retry-data') loadData();
   else if (a === 'retry-pipe') loadPipeline();
+  else if (a === 'airtable') {
+    state.hideAirtable = !!btn.checked; saveHideAirtable();
+    state.openStage = null; state.stageJobs = {};
+    shapePipeline(); render(); return;
+  }
   else if (a === 'view') { setView(btn.dataset.widget, btn.dataset.view); render(); }
   else if (a === 'toggle') { const k = btn.dataset.key; state.show[k] = !state.show[k]; render(); }
   else if (a === 'stage') {
@@ -945,7 +976,7 @@ window.addEventListener('message', e => {
   if (msg.type !== 'HELM_USER' || !msg.user) return;
   const first = !state.user || state.user.id !== msg.user.id;
   state.user = msg.user;
-  if (first) { state.views = {}; state.openStage = null; state.stageJobs = {}; }
+  if (first) { state.views = {}; state.openStage = null; state.stageJobs = {}; loadHideAirtable(); }
   if (first && canSee('exec')) {
     state.anchor = new Date();
     loadData();
