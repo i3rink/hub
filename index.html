@@ -1,4 +1,4 @@
-<!-- Hub v1.1.0 - deployed 6 Nov 2026 -->
+<!-- Hub v1.2.0 - deployed 6 Nov 2026 -->
 <!DOCTYPE html>
 <html lang="en-GB">
 <head>
@@ -130,6 +130,23 @@
     .rank { grid-template-columns: 90px 1fr; }
     .rank .r-val { grid-column: 1 / -1; margin: -4px 0 6px; }
   }
+
+  .app-view { margin-left: auto; font-size: 12px; color: var(--ink-2); background: #f0efec; border-radius: 999px; padding: 3px 10px; }
+  .card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+  .card-head > div:first-child { flex: 1 1 180px; min-width: 0; }
+  .vsw { display: inline-flex; border: 1px solid var(--ring); border-radius: 8px; overflow: hidden; flex: none; }
+  .vsw button { border: 0; background: transparent; padding: 4px 10px; font: inherit; font-size: 12px; color: var(--ink-2); cursor: pointer; }
+  .vsw button + button { border-left: 1px solid var(--ring); }
+  .vsw button.on { background: #f0efec; color: var(--ink); font-weight: 600; }
+  .pie-wrap { display: flex; align-items: center; gap: 28px; flex-wrap: wrap; }
+  .pie-legend { display: grid; gap: 6px; min-width: 220px; }
+  .pie-row { display: grid; grid-template-columns: 12px 1fr 50px 44px; align-items: center; gap: 8px; font-size: 13px; }
+  .pie-row i { width: 10px; height: 10px; border-radius: 3px; }
+  .pie-row b { text-align: right; font-variant-numeric: tabular-nums; }
+  .pie-row em { text-align: right; font-style: normal; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .data-note { font-size: 12px; color: var(--muted); margin: 8px 2px 14px; }
+  .t-none { font-size: 20px; color: var(--muted); font-weight: 500; }
+  .tiles .tile .t-label { min-height: 18px; }
 </style>
 </head>
 <body>
@@ -141,14 +158,14 @@
 
 <script>
 /* ═══════════════════════════════════════════════════════════════════
-   Hub: the dashboard app for HELM.
-   v1.1.0 holds the Exec view only, for super admins (permitted_modules includes 'admin').
+   Hub: the dashboard app for HELM. Spec: claude/hub-mi-spec.md in the HELM Troubleshooter project.
+   v1.2.0: widget framework. Each widget answers one question and offers only the chart types
+   that suit its data. The chosen type is kept on the device per user.
+   Views by Helm tick box: hub-exec, hub-sales, hub-office, hub-warehouse, hub-finance.
+   Super admins (admin) can open every view. Only the CEO view is built so far.
    Read only. Reads Scout leads and lead_activity. Writes nothing except its module_versions row.
-   Planned: lands first after the PIN, announcements, department messages, a view per role.
-   Chart rules follow the dataviz method: one axis, thin marks, legend for 2+ series,
-   colour follows the entity, text in ink tokens, tooltips built with textContent.
    ═══════════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v1.1.0';
+const APP_VERSION = 'v1.2.0';
 const MODULE_KEY  = 'hub';
 
 /* ── Scout project (read only) ── */
@@ -288,7 +305,7 @@ function groupOf(stage) { return GROUPS.find(gr => gr.stages.includes(stage)) ||
 /* ── State ── */
 const state = {
   user: null,
-  period: 'week',
+  period: 'month',
   anchor: new Date(),
   seq: 0,
   data: null,
@@ -298,24 +315,49 @@ const state = {
   pipeError: '',
   openStage: null,
   stageJobs: {},
-  show: { closed: false, converted: false, quoted: false, surveyorTable: false },
+  show: { closed: false, quoted: false },
+  views: {},
 };
 
-/* ── Period ranges (local UK time). Weeks run Monday to Sunday ── */
+/* ── Who sees what (Helm tick boxes). Super admins can open every view ── */
+function canSee(view) {
+  const mods = (state.user && state.user.permitted_modules) || [];
+  return mods.includes('admin') || mods.includes('hub-' + view);
+}
+
+/* ── Chosen chart per widget, kept on this device ── */
+function viewKey(id) { return 'hub.view.' + ((state.user && state.user.id) || 'anon') + '.' + id; }
+function getView(w) {
+  if (state.views[w.id] && w.views.includes(state.views[w.id])) return state.views[w.id];
+  let v = null;
+  try { v = localStorage.getItem(viewKey(w.id)); } catch (e) {}
+  return v && w.views.includes(v) ? v : w.views[0];
+}
+function setView(id, v) {
+  state.views[id] = v;
+  try { localStorage.setItem(viewKey(id), v); } catch (e) {}
+}
+const VIEW_LABEL = { line: 'Line', columns: 'Columns', bars: 'Bars', pie: 'Pie', split: 'Split', stages: 'Stages', table: 'Table', list: 'List' };
+
+/* ── Periods (local UK time). Weeks run Monday to Sunday ── */
 const TREND_N = 12;
+const PERIODS = ['day', 'week', 'month', 'quarter'];
 function startOfDay(d) { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; }
 function periodRange(period, anchor) {
   const a = startOfDay(anchor);
   let start, end;
-  if (period === 'day') {
-    start = a; end = new Date(a); end.setDate(end.getDate() + 1);
-  } else if (period === 'week') {
+  if (period === 'day') { start = a; end = new Date(a); end.setDate(end.getDate() + 1); }
+  else if (period === 'week') {
     const dow = (a.getDay() + 6) % 7;
     start = new Date(a); start.setDate(a.getDate() - dow);
     end = new Date(start); end.setDate(start.getDate() + 7);
-  } else {
+  } else if (period === 'month') {
     start = new Date(a.getFullYear(), a.getMonth(), 1);
     end = new Date(a.getFullYear(), a.getMonth() + 1, 1);
+  } else {
+    const q = Math.floor(a.getMonth() / 3) * 3;
+    start = new Date(a.getFullYear(), q, 1);
+    end = new Date(a.getFullYear(), q + 3, 1);
   }
   return { start, end };
 }
@@ -323,7 +365,8 @@ function shiftDate(anchor, period, dir) {
   const a = new Date(anchor);
   if (period === 'day') a.setDate(a.getDate() + dir);
   else if (period === 'week') a.setDate(a.getDate() + 7 * dir);
-  else a.setMonth(a.getMonth() + dir, 1);
+  else if (period === 'month') a.setMonth(a.getMonth() + dir, 1);
+  else a.setMonth(a.getMonth() + 3 * dir, 1);
   return a;
 }
 function trendRanges(period, anchor) {
@@ -331,20 +374,23 @@ function trendRanges(period, anchor) {
   for (let i = TREND_N - 1; i >= 0; i--) out.push(periodRange(period, shiftDate(anchor, period, -i)));
   return out;
 }
+function quarterName(d) { return 'Q' + (Math.floor(d.getMonth() / 3) + 1) + ' ' + d.getFullYear(); }
 function periodLabel(period, anchor) {
   const { start, end } = periodRange(period, anchor);
   if (period === 'day') return start.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' });
   if (period === 'month') return start.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
   const last = new Date(end); last.setDate(end.getDate() - 1);
+  if (period === 'quarter') return quarterName(start) + ' (' + start.toLocaleDateString('en-GB', { month: 'short' }) + ' to ' + last.toLocaleDateString('en-GB', { month: 'short' }) + ')';
   return start.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) + ' to ' +
          last.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 function tickLabel(range, period) {
-  if (period === 'day') return range.start.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric' });
-  if (period === 'month') return range.start.toLocaleDateString('en-GB', { month: 'short' });
-  return range.start.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+  const s = range.start;
+  if (period === 'day') return s.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric' });
+  if (period === 'month') return s.toLocaleDateString('en-GB', { month: 'short' }) + (s.getMonth() === 0 ? ' ' + String(s.getFullYear()).slice(2) : '');
+  if (period === 'quarter') return 'Q' + (Math.floor(s.getMonth() / 3) + 1) + ' ' + String(s.getFullYear()).slice(2);
+  return s.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
 }
-function prevWord(period) { return period === 'day' ? 'the day before' : period === 'week' ? 'last week' : 'last month'; }
 function isCurrentPeriod() {
   return periodRange(state.period, new Date()).start.getTime() === periodRange(state.period, state.anchor).start.getTime();
 }
@@ -355,8 +401,11 @@ function bucketOf(ranges, iso) {
   return -1;
 }
 
-/* ── Data: figures for the last 12 periods, ending with the chosen one ── */
+/* ── Data: the last 12 periods, ending with the chosen one ──
+   Sold = the job's install first booked in Scout (install_confirmed note). Scout records Quote Accepted
+   in the same minutes as the booking (checked 6 Nov 2026), so the booking is the sale (Neil, option A). */
 const LEAD_COLS = 'id,job_id,first_name,last_name,salesperson,status,survey_at,survey_done_at,quote_sent_at,quote_accepted_at,quote_total,install_at';
+const QUOTE_VALUES_FROM = new Date('2026-10-15T00:00:00');
 
 async function leadsByIds(ids) {
   const out = [];
@@ -384,50 +433,60 @@ async function loadData() {
   const s = encodeURIComponent(ranges[0].start.toISOString());
   const e = encodeURIComponent(ranges[ranges.length - 1].end.toISOString());
   try {
-    const [quotedAll, convertedAll, notes] = await Promise.all([
+    const [quoted, notes] = await Promise.all([
       scoutGet('leads', `select=${LEAD_COLS}&quote_sent_at=gte.${s}&quote_sent_at=lt.${e}&order=quote_sent_at.asc`),
-      scoutGet('leads', `select=${LEAD_COLS}&quote_accepted_at=gte.${s}&quote_accepted_at=lt.${e}&order=quote_accepted_at.asc`),
       scoutGet('lead_activity', `select=lead_id,created_at&activity_type=eq.install_confirmed&created_at=gte.${s}&created_at=lt.${e}&order=created_at.asc`),
     ]);
-
-    /* Installs booked: the first install_confirmed note per job. A job first booked before the window is left out */
     const firstNote = new Map();
     (notes || []).forEach(n => { if (n.lead_id && !firstNote.has(n.lead_id)) firstNote.set(n.lead_id, n.created_at); });
-    let bookIds = [...firstNote.keys()];
-    if (bookIds.length) {
-      const before = new Set((await installNotesFor(bookIds, `&created_at=lt.${s}`)).map(n => n.lead_id));
-      bookIds = bookIds.filter(id => !before.has(id));
+    let ids = [...firstNote.keys()];
+    if (ids.length) {
+      const before = new Set((await installNotesFor(ids, `&created_at=lt.${s}`)).map(n => n.lead_id));
+      ids = ids.filter(id => !before.has(id));
     }
-    const bookedAll = (bookIds.length ? await leadsByIds(bookIds) : [])
-      .map(l => ({ ...l, booked_at: firstNote.get(l.id) }));
-
-    /* Per-period series */
-    const blank = () => Array(TREND_N).fill(0);
-    const ser = { qN: blank(), qV: blank(), cN: blank(), cV: blank(), bN: blank(), bV: blank() };
-    (quotedAll || []).forEach(l => { const i = bucketOf(ranges, l.quote_sent_at); if (i >= 0) { ser.qN[i]++; ser.qV[i] += Number(l.quote_total) || 0; } });
-    (convertedAll || []).forEach(l => { const i = bucketOf(ranges, l.quote_accepted_at); if (i >= 0) { ser.cN[i]++; ser.cV[i] += Number(l.quote_total) || 0; } });
-    bookedAll.forEach(l => { const i = bucketOf(ranges, l.booked_at); if (i >= 0) { ser.bN[i]++; ser.bV[i] += Number(l.quote_total) || 0; } });
-
-    /* The chosen period's job lists */
-    const cur = TREND_N - 1;
-    const quoted = (quotedAll || []).filter(l => bucketOf(ranges, l.quote_sent_at) === cur);
-    const booked = bookedAll.filter(l => bucketOf(ranges, l.booked_at) === cur)
-      .sort((a, b) => new Date(a.booked_at) - new Date(b.booked_at));
-    let converted = (convertedAll || []).filter(l => bucketOf(ranges, l.quote_accepted_at) === cur);
-    if (converted.length) {
-      const first = new Map();
-      (await installNotesFor(converted.map(l => l.id))).forEach(n => { if (!first.has(n.lead_id)) first.set(n.lead_id, n.created_at); });
-      converted = converted.map(l => ({ ...l, booked_at: first.get(l.id) || null }));
-    }
-
+    const sold = (ids.length ? await leadsByIds(ids) : [])
+      .map(l => ({ ...l, sold_at: firstNote.get(l.id) }))
+      .sort((a, b) => new Date(a.sold_at) - new Date(b.sold_at));
     if (seq !== state.seq) return;
-    state.data = { period: state.period, ranges, ser, quoted, converted, booked };
+    state.data = { period: state.period, anchor: new Date(state.anchor), ranges, quoted: quoted || [], sold };
   } catch (err) {
     if (seq !== state.seq) return;
     state.dataError = err.message || 'Could not load figures';
   }
   state.loading = false;
   render();
+}
+
+/* Series per period, the chosen period's lists, and a fair comparison with the period before */
+function shapeData(d) {
+  const blank = () => Array(TREND_N).fill(0);
+  const ser = { qN: blank(), qV: blank(), sN: blank(), sV: blank() };
+  d.quoted.forEach(l => { const i = bucketOf(d.ranges, l.quote_sent_at); if (i >= 0) { ser.qN[i]++; ser.qV[i] += Number(l.quote_total) || 0; } });
+  d.sold.forEach(l => { const i = bucketOf(d.ranges, l.sold_at); if (i >= 0) { ser.sN[i]++; ser.sV[i] += Number(l.quote_total) || 0; } });
+  const cur = TREND_N - 1;
+  const curR = d.ranges[cur], prevR = d.ranges[cur - 1];
+  const now = Date.now();
+  const inProgress = now < curR.end.getTime();
+  const elapsed = Math.max(0, Math.min(now, curR.end.getTime()) - curR.start.getTime());
+  const prevCut = inProgress ? prevR.start.getTime() + elapsed : prevR.end.getTime();
+  const inPrev = ts => { const t = new Date(ts).getTime(); return t >= prevR.start.getTime() && t < prevCut; };
+  const prev = {
+    qN: d.quoted.filter(l => inPrev(l.quote_sent_at)).length,
+    sN: d.sold.filter(l => inPrev(l.sold_at)).length,
+    sV: d.sold.filter(l => inPrev(l.sold_at)).reduce((a, l) => a + (Number(l.quote_total) || 0), 0),
+  };
+  /* Charts start at the first period with any data, never fewer than 3 periods */
+  let first = 0;
+  while (first < cur - 2 && !ser.qN[first] && !ser.sN[first]) first++;
+  return {
+    ser, prev, inProgress, first,
+    quoted: d.quoted.filter(l => bucketOf(d.ranges, l.quote_sent_at) === cur),
+    sold: d.sold.filter(l => bucketOf(d.ranges, l.sold_at) === cur),
+  };
+}
+function compareWord(period, inProgress) {
+  const w = { day: 'yesterday', week: 'last week', month: 'last month', quarter: 'last quarter' }[period];
+  return inProgress ? 'this point ' + w : w;
 }
 
 /* ── Data: pipeline now ── */
@@ -467,121 +526,222 @@ async function loadStageJobs(stage) {
   render();
 }
 
-/* ══════════ Chart builders (SVG strings; every text value escaped) ══════════ */
+/* ══════════ Chart builders. SVG and HTML strings, every text value escaped ══════════ */
 function niceMax(v) {
   if (v <= 0) return 1;
   const p = Math.pow(10, Math.floor(Math.log10(v)));
   const n = v / p;
   return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10) * p;
 }
-/* Tooltip payload: title plus rows of [label, value, colour] */
 function tipAttr(title, rows) {
   return `data-tip-title="${esc(title)}" data-tip-rows="${esc(JSON.stringify(rows))}"`;
 }
-
-/* Two-series line chart on one £ axis, with a crosshair band per period */
-function lineChart(series, labels, ranges, period, w, h) {
-  const pl = 52, pr = 14, pt = 14, pb = 26;
-  const iw = w - pl - pr, ih = h - pt - pb;
+function axis(svg, pl, pr, w, y, max, fmt) {
+  [0, 0.5, 1].forEach(f => {
+    const yy = y(max * f);
+    svg.push(`<line x1="${pl}" x2="${w - pr}" y1="${yy}" y2="${yy}" stroke="${f === 0 ? 'var(--axis)' : 'var(--grid)'}" stroke-width="1"/>`);
+    svg.push(`<text x="${pl - 8}" y="${yy + 4}" text-anchor="end" font-size="11" fill="var(--muted)">${esc(fmt(max * f))}</text>`);
+  });
+}
+/* series: [{ name, color, vals }]; xs: [{ label, title }] */
+function lineChart(series, xs, w, h, fmt) {
+  const pl = 52, pr = 14, pt = 14, pb = 26, iw = w - pl - pr, ih = h - pt - pb, n = xs.length;
   const max = niceMax(Math.max(1, ...series.flatMap(sr => sr.vals)));
-  const n = labels.length;
   const x = i => pl + (n === 1 ? iw / 2 : (i * iw) / (n - 1));
   const y = v => pt + ih - (v / max) * ih;
-  let svg = `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" role="img" aria-label="${esc(series.map(sr => sr.name).join(' and '))} by period">`;
-  [0, 0.5, 1].forEach(f => {
-    const yy = y(max * f);
-    svg += `<line x1="${pl}" x2="${w - pr}" y1="${yy}" y2="${yy}" stroke="${f === 0 ? 'var(--axis)' : 'var(--grid)'}" stroke-width="1"/>`;
-    svg += `<text x="${pl - 8}" y="${yy + 4}" text-anchor="end" font-size="11" fill="var(--muted)">${esc(moneyShort(max * f))}</text>`;
-  });
+  const svg = [`<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" role="img" aria-label="${esc(series.map(s => s.name).join(' and '))}">`];
+  axis(svg, pl, pr, w, y, max, fmt);
   const every = iw / n < 44 ? 2 : 1;
-  labels.forEach((lb, i) => {
-    if ((n - 1 - i) % every !== 0) return;
-    svg += `<text x="${x(i)}" y="${h - 8}" text-anchor="middle" font-size="11" fill="var(--muted)">${esc(lb)}</text>`;
-  });
+  xs.forEach((xx, i) => { if ((n - 1 - i) % every === 0) svg.push(`<text x="${x(i)}" y="${h - 8}" text-anchor="middle" font-size="11" fill="var(--muted)">${esc(xx.label)}</text>`); });
   series.forEach(sr => {
-    const d = sr.vals.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
-    svg += `<path d="${d}" fill="none" stroke="${sr.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
-    const li = n - 1;
-    svg += `<circle cx="${x(li)}" cy="${y(sr.vals[li])}" r="4" fill="${sr.color}" stroke="var(--surface)" stroke-width="2"/>`;
+    svg.push(`<path d="${sr.vals.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ')}" fill="none" stroke="${sr.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`);
+    svg.push(`<circle cx="${x(n - 1)}" cy="${y(sr.vals[n - 1])}" r="4" fill="${sr.color}" stroke="var(--surface)" stroke-width="2"/>`);
   });
-  labels.forEach((lb, i) => {
+  xs.forEach((xx, i) => {
     const half = n === 1 ? iw / 2 : iw / (n - 1) / 2;
-    const rows = series.map(sr => [sr.name, money(sr.vals[i]), sr.color]);
-    svg += `<g class="hit-g" ${tipAttr(periodLabel(period, ranges[i].start), rows)}>
+    const left = Math.max(pl, x(i) - half);
+    svg.push(`<g class="hit-g" ${tipAttr(xx.title, series.map(sr => [sr.name, fmt(sr.vals[i]), sr.color]))}>
       <line class="xh" x1="${x(i)}" x2="${x(i)}" y1="${pt}" y2="${pt + ih}" stroke="var(--axis)" stroke-width="1"/>
-      <rect class="hit" x="${Math.max(pl, x(i) - half)}" y="${pt}" width="${Math.min(half * 2, w - pr - Math.max(pl, x(i) - half))}" height="${ih}"/></g>`;
+      <rect class="hit" x="${left}" y="${pt}" width="${Math.min(half * 2, w - pr - left)}" height="${ih}"/></g>`);
   });
-  return svg + '</svg>';
+  return svg.join('') + '</svg>';
 }
-
-/* Column chart, emphasis on the chosen period, value on its cap */
-function columnChart(vals, values2, labels, ranges, period, w, h, unit) {
-  const pl = 34, pr = 10, pt = 18, pb = 26;
-  const iw = w - pl - pr, ih = h - pt - pb;
-  const n = vals.length;
-  const max = Math.max(4, niceMax(Math.max(...vals)));
-  const band = iw / n, bw = Math.min(24, band * 0.6);
-  const y = v => pt + ih - (v / max) * ih;
-  let svg = `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" role="img" aria-label="${esc(unit)} by period">`;
-  [0, 0.5, 1].forEach(f => {
-    const yy = y(max * f);
-    svg += `<line x1="${pl}" x2="${w - pr}" y1="${yy}" y2="${yy}" stroke="${f === 0 ? 'var(--axis)' : 'var(--grid)'}" stroke-width="1"/>`;
-    svg += `<text x="${pl - 8}" y="${yy + 4}" text-anchor="end" font-size="11" fill="var(--muted)">${Math.round(max * f)}</text>`;
-  });
+function barPath(x0, bw, top, base) {
+  const hgt = base - top;
+  if (hgt <= 0) return '';
+  const r = Math.min(4, hgt);
+  return `M${x0},${base} L${x0},${top + r} Q${x0},${top} ${x0 + r},${top} L${x0 + bw - r},${top} Q${x0 + bw},${top} ${x0 + bw},${top + r} L${x0 + bw},${base} Z`;
+}
+/* Columns for one or two series. One series: the last column is the accent, the rest recede */
+function columnChart(series, xs, w, h, fmt, opts = {}) {
+  const pl = 52, pr = 10, pt = 18, pb = 26, iw = w - pl - pr, ih = h - pt - pb, n = xs.length, k = series.length;
+  const max = niceMax(Math.max(opts.minMax || 1, ...series.flatMap(sr => sr.vals)));
+  const band = iw / n, bw = Math.min(24, (band * 0.7 - (k - 1) * 2) / k);
+  const y = v => pt + ih - (v / max) * ih, base = pt + ih;
+  const svg = [`<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" role="img" aria-label="${esc(series.map(s => s.name).join(' and '))}">`];
+  axis(svg, pl, pr, w, y, max, fmt);
   const every = band < 40 ? 2 : 1;
-  vals.forEach((v, i) => {
-    const cx = pl + band * i + band / 2;
-    const cur = i === n - 1;
-    const top = y(v), base = pt + ih, x0 = cx - bw / 2;
-    const hgt = base - top;
-    const r = Math.min(4, hgt);
-    const path = hgt <= 0 ? '' :
-      `M${x0},${base} L${x0},${top + r} Q${x0},${top} ${x0 + r},${top} L${x0 + bw - r},${top} Q${x0 + bw},${top} ${x0 + bw},${top + r} L${x0 + bw},${base} Z`;
-    const rows = [[unit, String(v), cur ? 'var(--s1)' : 'var(--deemph)'], ['Value', money(values2[i]), '']];
-    svg += `<g class="hit-g" ${tipAttr(periodLabel(period, ranges[i].start), rows)}>
-      ${path ? `<path class="bar-mark" d="${path}" fill="${cur ? 'var(--s1)' : 'var(--deemph)'}"/>` : ''}
-      <rect class="hit" x="${pl + band * i}" y="${pt}" width="${band}" height="${ih}"/></g>`;
-    if (cur) svg += `<text x="${cx}" y="${top - 5}" text-anchor="middle" font-size="12" font-weight="600" fill="var(--ink)">${v}</text>`;
-    if ((n - 1 - i) % every === 0) svg += `<text x="${cx}" y="${h - 8}" text-anchor="middle" font-size="11" fill="var(--muted)">${esc(labels[i])}</text>`;
+  xs.forEach((xx, i) => {
+    const groupW = k * bw + (k - 1) * 2, gx = pl + band * i + (band - groupW) / 2;
+    let marks = '';
+    series.forEach((sr, j) => {
+      const fill = k === 1 && opts.emphasiseLast ? (i === n - 1 ? sr.color : 'var(--deemph)') : sr.color;
+      const p = barPath(gx + j * (bw + 2), bw, y(sr.vals[i]), base);
+      if (p) marks += `<path class="bar-mark" d="${p}" fill="${fill}"/>`;
+    });
+    svg.push(`<g class="hit-g" ${tipAttr(xx.title, series.map(sr => [sr.name, fmt(sr.vals[i]), sr.color]).concat(opts.extraTip ? [opts.extraTip(i)] : []))}>${marks}
+      <rect class="hit" x="${pl + band * i}" y="${pt}" width="${band}" height="${ih}"/></g>`);
+    if (k === 1 && opts.emphasiseLast && i === n - 1) svg.push(`<text x="${pl + band * i + band / 2}" y="${y(series[0].vals[i]) - 5}" text-anchor="middle" font-size="12" font-weight="600" fill="var(--ink)">${esc(fmt(series[0].vals[i]))}</text>`);
+    if ((n - 1 - i) % every === 0) svg.push(`<text x="${pl + band * i + band / 2}" y="${h - 8}" text-anchor="middle" font-size="11" fill="var(--muted)">${esc(xx.label)}</text>`);
   });
-  return svg + '</svg>';
+  return svg.join('') + '</svg>';
 }
-
-function sparkline(vals, color) {
-  const w = 84, h = 28, n = vals.length, max = Math.max(1, ...vals);
-  const x = i => 2 + (i * (w - 6)) / (n - 1), y = v => h - 3 - (v / max) * (h - 8);
-  const d = vals.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
-  return `<svg width="${w}" height="${h}" aria-hidden="true"><path d="${d}" fill="none" stroke="var(--deemph)" stroke-width="1.5" stroke-linejoin="round"/>
-    <circle cx="${x(n - 1)}" cy="${y(vals[n - 1])}" r="3" fill="${color}"/></svg>`;
+/* Ranked horizontal bars. rows: [{ name, value, text, tip }] */
+function hBars(rows, color) {
+  if (!rows.length) return '<div class="empty">Nothing to show.</div>';
+  const max = Math.max(1, ...rows.map(r => r.value));
+  return '<div class="rank">' + rows.map(r => `<div class="r-name" title="${esc(r.name)}">${esc(r.name)}</div>
+    <div class="r-track" ${tipAttr(r.name, r.tip)}><span style="width:${(r.value / max * 100).toFixed(1)}%;background:${r.color || color}"></span></div>
+    <div class="r-val">${r.text}</div>`).join('') + '</div>';
 }
-
-/* Tall segmented bar: one whole split into its groups */
-function segBar(parts, width) {
-  const total = parts.reduce((a, p) => a + p.count, 0) || 1;
-  const blocks = parts.filter(p => p.count > 0).map(p => {
-    const pct = p.count / total;
-    const label = String(p.count);
-    const fits = pct * width > label.length * 8 + 18;
-    return `<div ${tipAttr(p.name, [['Leads', String(p.count), p.color], ['Quoted value', money(p.value), '']])}
+/* Vertical bars for categories. rows as hBars */
+function vBars(rows, color, w, h, fmt) {
+  if (!rows.length) return '<div class="empty">Nothing to show.</div>';
+  return columnChart([{ name: 'Value', color, vals: rows.map(r => r.value) }],
+    rows.map(r => ({ label: r.name.length > 10 ? r.name.slice(0, 9) + '.' : r.name, title: r.name })), w, h, fmt);
+}
+/* Pie for a split of up to 5 parts. parts: [{ name, count, value, color }] */
+function pieChart(parts, size) {
+  const live = parts.filter(p => p.count > 0);
+  const total = live.reduce((a, p) => a + p.count, 0) || 1;
+  const r = size / 2 - 2, c = size / 2;
+  let a0 = -Math.PI / 2, paths = '';
+  live.forEach(p => {
+    const a1 = a0 + (p.count / total) * Math.PI * 2;
+    const large = a1 - a0 > Math.PI ? 1 : 0;
+    const d = live.length === 1
+      ? `M${c},${c - r} A${r},${r} 0 1 1 ${c - 0.01},${c - r} Z`
+      : `M${c},${c} L${c + r * Math.cos(a0)},${c + r * Math.sin(a0)} A${r},${r} 0 ${large} 1 ${c + r * Math.cos(a1)},${c + r * Math.sin(a1)} Z`;
+    paths += `<path class="bar-mark" d="${d}" fill="${p.color}" stroke="var(--surface)" stroke-width="2" ${tipAttr(p.name, [['Leads', String(p.count), p.color], ['Share', Math.round(p.count / total * 100) + '%', ''], ['Quoted value', money(p.value), '']])}/>`;
+    a0 = a1;
+  });
+  const legend = live.map(p => `<div class="pie-row"><i style="background:${p.color}"></i><span>${esc(p.name)}</span><b>${p.count}</b><em>${Math.round(p.count / total * 100)}%</em></div>`).join('');
+  return `<div class="pie-wrap"><svg width="${size}" height="${size}" role="img" aria-label="${esc(live.map(p => p.name + ' ' + p.count).join(', '))}">${paths}</svg><div class="pie-legend">${legend}</div></div>`;
+}
+/* Tall split bar for one whole */
+function splitBar(parts, width) {
+  const live = parts.filter(p => p.count > 0);
+  const total = live.reduce((a, p) => a + p.count, 0) || 1;
+  const blocks = live.map(p => {
+    const label = String(p.count), fits = (p.count / total) * width > label.length * 8 + 18;
+    return `<div ${tipAttr(p.name, [['Leads', String(p.count), p.color], ['Share', Math.round(p.count / total * 100) + '%', ''], ['Quoted value', money(p.value), '']])}
       style="flex:${p.count} 1 0;background:${p.color};color:${p.ink};">${fits ? esc(label) : ''}</div>`;
   }).join('');
-  const legend = parts.filter(p => p.count > 0).map(p => `<span><i style="background:${p.color}"></i>${esc(p.name)}</span>`).join('');
-  return `<div class="segbar" role="img" aria-label="${esc(parts.map(p => p.name + ' ' + p.count).join(', '))}">${blocks}</div><div class="legend">${legend}</div>`;
+  return `<div class="segbar" role="img" aria-label="${esc(live.map(p => p.name + ' ' + p.count).join(', '))}">${blocks}</div>
+    <div class="legend">${live.map(p => `<span><i style="background:${p.color}"></i>${esc(p.name)}</span>`).join('')}</div>`;
+}
+function sparkline(vals, color) {
+  const w = 84, h = 28, n = vals.length, max = Math.max(1, ...vals);
+  if (n < 2) return '';
+  const x = i => 2 + (i * (w - 6)) / (n - 1), y = v => h - 3 - (v / max) * (h - 8);
+  return `<svg width="${w}" height="${h}" aria-hidden="true"><path d="${vals.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ')}" fill="none" stroke="var(--deemph)" stroke-width="1.5" stroke-linejoin="round"/>
+    <circle cx="${x(n - 1)}" cy="${y(vals[n - 1])}" r="3" fill="${color}"/></svg>`;
+}
+/* Cells are already escaped HTML. A cell given as [html, 'num'] is right-aligned */
+function table(headers, rows, totalRow, emptyText) {
+  if (!rows.length) return `<div class="empty">${esc(emptyText || 'None.')}</div>`;
+  const th = headers.map(h => Array.isArray(h) ? `<th class="${h[1]}">${esc(h[0])}</th>` : `<th>${esc(h)}</th>`).join('');
+  const tr = cells => cells.map(c => Array.isArray(c) ? `<td class="${c[1]}">${c[0]}</td>` : `<td>${c}</td>`).join('');
+  const tot = totalRow ? `<tr class="total">${tr(totalRow.map(c => Array.isArray(c) ? c : esc(c)))}</tr>` : '';
+  return `<div class="tbl-wrap"><table><thead><tr>${th}</tr></thead><tbody>${rows.map(r => `<tr>${tr(r)}</tr>`).join('')}${tot}</tbody></table></div>`;
+}
+
+/* ══════════ Widgets. Each one answers one question and lists only the views that suit its data ══════════ */
+const WIDGETS = {
+  value: {
+    id: 'value', title: 'Quoted and sold', views: ['line', 'columns', 'table'],
+    hint: ctx => `Value of quotes sent and installs booked in each ${ctx.period}.`,
+    body(view, ctx) {
+      const series = [{ name: 'Quoted', color: 'var(--s1)', vals: ctx.qV }, { name: 'Sold', color: 'var(--s2)', vals: ctx.sV }];
+      if (view === 'table') return table([ctx.periodCap, ['Quotes', 'num'], ['£ quoted', 'num'], ['Sold', 'num'], ['£ sold', 'num']],
+        ctx.xs.map((x, i) => [esc(x.title), [String(ctx.qN[i]), 'num'], [esc(money(ctx.qV[i])), 'num'], [String(ctx.sN[i]), 'num'], [esc(money(ctx.sV[i])), 'num']]).reverse(), null);
+      const legend = `<div class="legend"><span><i class="${view === 'line' ? 'line' : ''}" style="background:var(--s1)"></i>Quoted</span><span><i class="${view === 'line' ? 'line' : ''}" style="background:var(--s2)"></i>Sold</span></div>`;
+      return legend + (view === 'line' ? lineChart(series, ctx.xs, ctx.w2, 210, moneyShort) : columnChart(series, ctx.xs, ctx.w2, 210, moneyShort));
+    },
+  },
+  sold: {
+    id: 'sold', title: 'Installs booked', views: ['columns', 'line', 'table'],
+    hint: ctx => `Jobs whose install was first booked in each ${ctx.period}. That's the sale.`,
+    body(view, ctx) {
+      if (view === 'table') return table([ctx.periodCap, ['Installs booked', 'num'], ['Value', 'num']],
+        ctx.xs.map((x, i) => [esc(x.title), [String(ctx.sN[i]), 'num'], [esc(money(ctx.sV[i])), 'num']]).reverse(), null);
+      const series = [{ name: 'Installs booked', color: 'var(--s1)', vals: ctx.sN }];
+      if (view === 'line') return lineChart(series, ctx.xs, ctx.w2, 210, v => String(Math.round(v)));
+      return columnChart(series, ctx.xs, ctx.w2, 210, v => String(Math.round(v)),
+        { emphasiseLast: true, minMax: 4, extraTip: i => ['Value', money(ctx.sV[i]), ''] });
+    },
+  },
+  surveyors: {
+    id: 'surveyors', title: 'By surveyor', views: ['bars', 'columns', 'table'],
+    hint: ctx => `Sold value per salesperson this ${ctx.period}, highest first.`,
+    body(view, ctx) {
+      const rows = ctx.bySurveyor;
+      if (!rows.length) return `<div class="empty">No quotes or sales this ${esc(ctx.period)}.</div>`;
+      if (view === 'table') return table(['Surveyor', ['Quotes', 'num'], ['£ quoted', 'num'], ['Sold', 'num'], ['£ sold', 'num'], ['Sold against quoted', 'num']],
+        rows.map(r => [esc(r.name), [String(r.q), 'num'], [esc(money(r.qv)), 'num'], [String(r.s), 'num'], [esc(money(r.sv)), 'num'],
+                       [r.qv ? Math.round(r.sv / r.qv * 100) + '%' : '<span class="nr">No quotes</span>', 'num']]), null);
+      const bars = rows.map(r => ({ name: r.name, value: r.sv,
+        text: `<b>${esc(money(r.sv))}</b> · ${r.s} sold, ${r.q} quoted`,
+        tip: [['Sold', money(r.sv), 'var(--s1)'], ['Quoted', money(r.qv), ''], ['Installs booked', String(r.s), '']] }));
+      return view === 'columns' ? vBars(bars, 'var(--s1)', ctx.w1, 220, moneyShort) : hBars(bars, 'var(--s1)');
+    },
+  },
+  split: {
+    id: 'split', title: 'Where the open leads are', views: ['split', 'pie', 'bars', 'table'],
+    hint: () => 'Open leads by part of the pipeline.',
+    body(view, ctx) {
+      const parts = ctx.parts.filter(p => p.count > 0);
+      if (view === 'pie') return pieChart(parts, 180);
+      if (view === 'bars') return hBars(parts.map(p => ({ name: p.name, value: p.count, color: p.color,
+        text: `<b>${p.count}</b> · ${esc(moneyShort(p.value))}`, tip: [['Leads', String(p.count), p.color], ['Quoted value', money(p.value), '']] })), 'var(--s1)');
+      if (view === 'table') return table(['Part of pipeline', ['Leads', 'num'], ['Share', 'num'], ['Quoted value', 'num']],
+        parts.map(p => [esc(p.name), [String(p.count), 'num'], [Math.round(p.count / ctx.openN * 100) + '%', 'num'], [esc(money(p.value)), 'num']]), null);
+      return splitBar(parts, ctx.w1);
+    },
+  },
+  stages: {
+    id: 'stages', title: 'Every stage', views: ['stages', 'table'],
+    hint: () => 'Tap a stage to list its jobs.',
+    body(view, ctx) {
+      if (view === 'table') return table(['Stage', 'Part of pipeline', ['Leads', 'num'], ['Quoted value', 'num']],
+        ctx.open.map(s => [esc(stageLabel(s.key)), esc(groupOf(s.key).name), [String(s.count), 'num'], [esc(money(s.value)), 'num']]), null);
+      const max = Math.max(1, ...ctx.open.map(s => s.count));
+      let html = ctx.open.map(s => stageRow(s, max, groupOf(s.key).color)).join('');
+      html += `<div style="margin-top:12px"><button class="link" data-action="toggle" data-key="closed">${state.show.closed ? 'Hide closed jobs' : 'Show closed jobs (' + ctx.closedN.toLocaleString('en-GB') + ')'}</button></div>`;
+      if (state.show.closed) html += ctx.closed.map(s => stageRow(s, Math.max(1, ...ctx.closed.map(x => x.count)), 'var(--deemph)')).join('');
+      return html;
+    },
+  },
+};
+function widgetCard(w, ctx, extraClass) {
+  const view = getView(w);
+  const menu = w.views.length > 1 ? `<div class="vsw" role="group" aria-label="Chart type">${w.views.map(v =>
+    `<button data-action="view" data-widget="${w.id}" data-view="${v}" class="${v === view ? 'on' : ''}">${VIEW_LABEL[v]}</button>`).join('')}</div>` : '';
+  return `<div class="card ${extraClass || ''}"><div class="card-head"><div><h2>${esc(w.title)}</h2><p class="hint">${esc(w.hint(ctx))}</p></div>${menu}</div>${w.body(view, ctx)}</div>`;
 }
 
 /* ══════════ Render ══════════ */
 function render() {
   const root = g('root');
   if (!state.user) { root.innerHTML = '<div class="gate">Open Hub from Helm to see your dashboard.</div>'; return; }
-  const mods = state.user.permitted_modules || [];
-  if (!mods.includes('admin')) {
+  if (!canSee('exec')) {
     root.innerHTML = head() + `<div class="gate">Hi ${esc((state.user.name || '').split(' ')[0])}. Your dashboard is on its way.</div>`;
     return;
   }
-  root.innerHTML = head() + renderPeriod() + renderPipeline();
+  root.innerHTML = head() + renderSales() + renderPipeline();
 }
 function head() {
-  return `<div class="app-head"><div class="app-name">Hub</div><div class="app-ver">${esc(APP_VERSION)}</div></div>`;
+  return `<div class="app-head"><div class="app-name">Hub</div><div class="app-ver">${esc(APP_VERSION)}</div><div class="app-view">CEO view</div></div>`;
 }
 function innerWidth(cols) {
   const W = Math.min(document.documentElement.clientWidth || g('root').clientWidth || 360, 1140) - (window.innerWidth <= 560 ? 24 : 32);
@@ -589,10 +749,9 @@ function innerWidth(cols) {
   return Math.max(260, Math.floor((twoCol ? (W - 14) / 2 : W) - 38));
 }
 
-function renderPeriod() {
+function renderSales() {
   const p = state.period;
-  const seg = ['day', 'week', 'month'].map(k =>
-    `<button data-action="period" data-period="${k}" class="${p === k ? 'on' : ''}">${k[0].toUpperCase() + k.slice(1)}</button>`).join('');
+  const seg = PERIODS.map(k => `<button data-action="period" data-period="${k}" class="${p === k ? 'on' : ''}">${k[0].toUpperCase() + k.slice(1)}</button>`).join('');
   let html = `<div class="section-title">Sales and installs</div>
     <div class="controls">
       <div class="seg">${seg}</div>
@@ -601,77 +760,59 @@ function renderPeriod() {
       <button class="btn" data-action="next" aria-label="Next" ${isCurrentPeriod() ? 'disabled' : ''}>&#8250;</button>
       ${isCurrentPeriod() ? '' : '<button class="btn" data-action="today">Back to now</button>'}
     </div>`;
-  if (state.dataError) {
-    return html + `<div class="err">Could not load the figures: ${esc(state.dataError)} <button class="btn" data-action="retry-data">Try again</button></div>`;
-  }
+  if (state.dataError) return html + `<div class="err">Could not load the figures: ${esc(state.dataError)} <button class="btn" data-action="retry-data">Try again</button></div>`;
   const d = state.data;
   if (!d) return html + '<div class="loading">Loading figures</div>';
-  html += `<div class="${state.loading ? 'stale' : ''}">`;
-
-  const cur = TREND_N - 1, prev = cur - 1;
-  const ser = d.ser;
-  const c = sumValues(d.converted), q = sumValues(d.quoted), b = sumValues(d.booked);
-  const days = d.converted.map(l => daysBetween(surveyDate(l), l.quote_accepted_at)).filter(x => x != null);
+  const sh = shapeData(d);
+  const cur = TREND_N - 1, f = sh.first;
+  const word = compareWord(d.period, sh.inProgress);
+  const sold = sumValues(sh.sold), quoted = sumValues(sh.quoted);
+  const withValue = sh.sold.filter(l => l.quote_total != null);
+  const avg = withValue.length ? sold.total / withValue.length : null;
+  const days = sh.sold.map(l => daysBetween(surveyDate(l), l.sold_at)).filter(x => x != null);
   const avgDays = days.length ? Math.round(days.reduce((a, x) => a + x, 0) / days.length) : null;
-  const pct = q.total ? Math.min(100, Math.round((c.total / q.total) * 100)) : null;
-  const pw = prevWord(d.period);
+  const pct = quoted.total ? Math.min(100, Math.round(sold.total / quoted.total * 100)) : null;
+  const sl = arr => arr.slice(f);
 
-  html += `<div class="tiles">
-    ${tile('Installs booked', ser.bN[cur], money(ser.bV[cur]), delta(ser.bN[cur], ser.bN[prev], pw), sparkline(ser.bN, 'var(--s1)'), b.missing)}
-    ${tile('Sales (quote accepted)', ser.cN[cur], money(ser.cV[cur]), delta(ser.cN[cur], ser.cN[prev], pw), sparkline(ser.cV, 'var(--s2)'), c.missing)}
-    ${tile('Quotes sent', ser.qN[cur], money(ser.qV[cur]), delta(ser.qN[cur], ser.qN[prev], pw), sparkline(ser.qV, 'var(--s1)'), q.missing)}
-    <div class="tile"><div class="t-label">Sold against quoted</div>
-      <div class="t-value">${pct == null ? '<span style="font-size:20px;color:var(--muted)">No quotes</span>' : pct + '%'}</div>
+  html += `<div class="${state.loading ? 'stale' : ''}"><div class="tiles">
+    ${tile('Sold (installs booked)', String(sh.ser.sN[cur]), money(sh.ser.sV[cur]), delta(sh.ser.sN[cur], sh.prev.sN, word), sparkline(sl(sh.ser.sN), 'var(--s1)'), sold.missing, sh.inProgress)}
+    ${tile('Quotes sent', String(sh.ser.qN[cur]), money(sh.ser.qV[cur]), delta(sh.ser.qN[cur], sh.prev.qN, word), sparkline(sl(sh.ser.qV), 'var(--s1)'), quoted.missing, sh.inProgress)}
+    <div class="tile"><div class="t-label">Sold against quoted${sh.inProgress ? ' so far' : ''}</div>
+      <div class="t-value">${pct == null ? '<span class="t-none">No quotes</span>' : pct + '%'}</div>
       <div class="meter" role="img" aria-label="${pct || 0} percent"><span style="width:${pct || 0}%"></span></div>
-      <div class="t-note">${esc(money(c.total))} sold of ${esc(money(q.total))} quoted</div>
-      <div class="t-note">Survey to sale: ${avgDays == null ? 'no survey dates' : esc(avgDays + ' days on average')}</div>
+      <div class="t-note">${esc(money(sold.total))} sold of ${esc(money(quoted.total))} quoted</div>
+    </div>
+    <div class="tile"><div class="t-label">Average sale${sh.inProgress ? ' so far' : ''}</div>
+      <div class="t-value">${avg == null ? '<span class="t-none">No sales</span>' : esc(money(avg))}</div>
+      <div class="t-note">Survey to install booked: ${avgDays == null ? 'no survey dates' : esc(avgDays + ' days on average')}</div>
+      ${days.length < sh.sold.length ? `<div class="t-note">${days.length} of ${sh.sold.length} jobs have a survey date</div>` : ''}
     </div>
   </div>`;
 
-  const labels = d.ranges.map(r => tickLabel(r, d.period));
-  const w2 = innerWidth(2);
-  html += `<div class="grid-2">
-    <div class="card"><h2>Quoted and sold, last ${TREND_N} ${esc(d.period)}s</h2>
-      <p class="hint">Value of quotes sent and quotes accepted in each ${esc(d.period)}.</p>
-      <div class="legend"><span><i class="line" style="background:var(--s1)"></i>Quoted</span><span><i class="line" style="background:var(--s2)"></i>Sold</span></div>
-      ${lineChart([{ name: 'Quoted', color: 'var(--s1)', vals: ser.qV }, { name: 'Sold', color: 'var(--s2)', vals: ser.cV }], labels, d.ranges, d.period, w2, 200)}
-    </div>
-    <div class="card"><h2>Installs booked, last ${TREND_N} ${esc(d.period)}s</h2>
-      <p class="hint">Jobs whose install was first booked in each ${esc(d.period)}. This ${esc(d.period)} is highlighted.</p>
-      <div class="legend" style="visibility:hidden"><span><i></i>.</span></div>
-      ${columnChart(ser.bN, ser.bV, labels, d.ranges, d.period, w2, 200, 'Installs booked')}
-    </div>
-  </div>`;
+  const ctx = {
+    period: d.period, periodCap: d.period[0].toUpperCase() + d.period.slice(1),
+    xs: d.ranges.slice(f).map(r => ({ label: tickLabel(r, d.period), title: periodLabel(d.period, r.start) })),
+    qN: sl(sh.ser.qN), qV: sl(sh.ser.qV), sN: sl(sh.ser.sN), sV: sl(sh.ser.sV),
+    w1: innerWidth(1), w2: innerWidth(2), bySurveyor: surveyorRows(sh),
+  };
+  const early = d.ranges[f].start < QUOTE_VALUES_FROM;
+  html += `<div class="grid-2">${widgetCard(WIDGETS.value, ctx)}${widgetCard(WIDGETS.sold, ctx)}</div>`;
+  if (early || f > 0) html += `<p class="data-note">${f > 0 ? 'Charts start at the first ' + esc(d.period) + ' with data in Scout. ' : ''}${early ? 'Quote values are only recorded from mid-October 2026, so £ figures before then are low.' : ''}</p>`;
 
-  html += card('Installs booked this ' + d.period, 'Booked in Scout, oldest first. Value is the last quote emailed.',
-    table(['Booked on', 'Job ID', 'Customer', 'Surveyor', 'Install date', ['Value', 'num']],
-      d.booked.map(l => [dateTime(l.booked_at), jobId(l), esc(custName(l)), surveyor(l), dateShort(l.install_at), [moneyOrNr(l.quote_total), 'num']]),
-      d.booked.length ? ['Total', d.booked.length + ' jobs', '', '', '', [esc(money(b.total)), 'num']] : null, 'No installs booked this ' + d.period + '.'));
+  html += `<div class="card"><h2>Sold this ${esc(d.period)}: ${sh.sold.length}</h2><p class="hint">Installs booked in Scout, oldest first. Value is the last quote emailed.</p>
+    ${table(['Booked on', 'Job ID', 'Customer', 'Surveyor', 'Survey', ['Days', 'num'], 'Install date', ['Value', 'num']],
+      sh.sold.map(l => { const dd = daysBetween(surveyDate(l), l.sold_at);
+        return [dateTime(l.sold_at), jobId(l), esc(custName(l)), surveyor(l), dateShort(surveyDate(l)), [dd == null ? NR : String(dd), 'num'], dateShort(l.install_at), [moneyOrNr(l.quote_total), 'num']]; }),
+      sh.sold.length ? ['Total', sh.sold.length + ' jobs', '', '', '', '', '', [esc(money(sold.total)), 'num']] : null, 'No installs booked this ' + d.period + '.')}</div>`;
 
-  html += `<div class="card"><h2>By surveyor this ${esc(d.period)}</h2><p class="hint">Sold value per salesperson, highest first.</p>
-    ${renderRank(d)}
-    <div style="margin-top:10px"><button class="link" data-action="toggle" data-key="surveyorTable">${state.show.surveyorTable ? 'Hide the table' : 'Show as a table'}</button></div>
-    ${state.show.surveyorTable ? '<div style="margin-top:10px">' + renderBySurveyorTable(d) + '</div>' : ''}
-  </div>`;
+  html += widgetCard(WIDGETS.surveyors, ctx);
 
-  html += toggleCard('converted', `Sales this ${d.period}`, d.converted.length,
-    'Jobs moved to Quote Accepted. Days counts from the survey date to the accepted date.',
-    () => table(['Job ID', 'Customer', 'Surveyor', 'Survey', 'Accepted', ['Days', 'num'], 'Install booked', 'Stage now', ['Value', 'num']],
-      d.converted.map(l => {
-        const dd = daysBetween(surveyDate(l), l.quote_accepted_at);
-        return [jobId(l), esc(custName(l)), surveyor(l), dateShort(surveyDate(l)), dateShort(l.quote_accepted_at),
-                [dd == null ? NR : String(dd), 'num'], l.booked_at ? dateShort(l.booked_at) : '<span class="nr">Not yet</span>',
-                `<span class="pill">${esc(stageLabel(l.status))}</span>`, [moneyOrNr(l.quote_total), 'num']];
-      }),
-      ['Total', d.converted.length + ' jobs', '', '', '', '', '', '', [esc(money(c.total)), 'num']], ''));
-
-  html += toggleCard('quoted', `Quotes sent this ${d.period}`, d.quoted.length,
-    'Jobs whose latest quote was emailed. A quote sent again moves to the newer date.',
-    () => table(['Sent', 'Job ID', 'Customer', 'Surveyor', 'Stage now', ['Value', 'num']],
-      d.quoted.map(l => [dateShort(l.quote_sent_at), jobId(l), esc(custName(l)), surveyor(l),
-                         `<span class="pill">${esc(stageLabel(l.status))}</span>`, [moneyOrNr(l.quote_total), 'num']]),
-      ['Total', d.quoted.length + ' quotes', '', '', '', [esc(money(q.total)), 'num']], ''));
-
+  const qOpen = state.show.quoted;
+  html += `<div class="card"><h2>Quotes sent this ${esc(d.period)}: ${sh.quoted.length}</h2><p class="hint">Jobs whose latest quote was emailed. A quote sent again moves to the newer date.</p>
+    ${sh.quoted.length ? `<button class="link" data-action="toggle" data-key="quoted">${qOpen ? 'Hide the jobs' : 'Show the ' + sh.quoted.length + ' jobs'}</button>` : '<div class="empty">None.</div>'}
+    ${qOpen && sh.quoted.length ? '<div style="margin-top:10px">' + table(['Sent', 'Job ID', 'Customer', 'Surveyor', 'Stage now', ['Value', 'num']],
+      sh.quoted.map(l => [dateShort(l.quote_sent_at), jobId(l), esc(custName(l)), surveyor(l), `<span class="pill">${esc(stageLabel(l.status))}</span>`, [moneyOrNr(l.quote_total), 'num']]),
+      ['Total', sh.quoted.length + ' quotes', '', '', '', [esc(money(quoted.total)), 'num']], '') + '</div>' : ''}</div>`;
   return html + '</div>';
 }
 
@@ -681,51 +822,19 @@ function delta(nowV, prevV, word) {
   if (diff < 0) return { cls: 'down', text: `▼ ${-diff} fewer than ${word}` };
   return { cls: 'flat', text: `Same as ${word}` };
 }
-function tile(label, value, sub, dl, spark, missing) {
-  return `<div class="tile"><div class="t-label">${esc(label)}</div>
+function tile(label, value, sub, dl, spark, missing, soFar) {
+  return `<div class="tile"><div class="t-label">${esc(label)}${soFar ? ' so far' : ''}</div>
     <div class="t-row"><div class="t-value">${esc(value)}</div>${spark}</div>
     <div class="t-sub">${esc(sub)}</div>
     <div class="t-delta ${dl.cls}">${esc(dl.text)}</div>
     ${missing ? `<div class="t-note">${missing} with no value recorded</div>` : ''}</div>`;
 }
-function card(title, hint, body) {
-  return `<div class="card"><h2>${esc(title)}</h2><p class="hint">${esc(hint)}</p>${body}</div>`;
-}
-function toggleCard(key, title, count, hint, bodyFn) {
-  const open = state.show[key];
-  return `<div class="card"><h2>${esc(title)}: ${count}</h2><p class="hint">${esc(hint)}</p>
-    ${count ? `<button class="link" data-action="toggle" data-key="${key}">${open ? 'Hide the jobs' : 'Show the ' + count + ' jobs'}</button>` : '<div class="empty">None.</div>'}
-    ${open && count ? '<div style="margin-top:10px">' + bodyFn() + '</div>' : ''}</div>`;
-}
-
-function surveyorRows(d) {
+function surveyorRows(sh) {
   const m = new Map();
-  const row = name => {
-    const k = name || '';
-    if (!m.has(k)) m.set(k, { name: k, q: 0, qv: 0, c: 0, cv: 0, b: 0, bv: 0 });
-    return m.get(k);
-  };
-  d.quoted.forEach(l => { const r = row(l.salesperson); r.q++; r.qv += Number(l.quote_total) || 0; });
-  d.converted.forEach(l => { const r = row(l.salesperson); r.c++; r.cv += Number(l.quote_total) || 0; });
-  d.booked.forEach(l => { const r = row(l.salesperson); r.b++; r.bv += Number(l.quote_total) || 0; });
-  return [...m.values()].sort((a, b) => b.cv - a.cv || b.qv - a.qv);
-}
-function renderRank(d) {
-  const rows = surveyorRows(d);
-  if (!rows.length) return '<div class="empty">No quotes or sales this ' + esc(d.period) + '.</div>';
-  const max = Math.max(1, ...rows.map(r => r.cv));
-  return '<div class="rank">' + rows.map(r => {
-    const name = r.name || 'No salesperson';
-    return `<div class="r-name" title="${esc(name)}">${esc(name)}</div>
-      <div class="r-track" ${tipAttr(name, [['Sold', money(r.cv), 'var(--s1)'], ['Quoted', money(r.qv), ''], ['Installs booked', String(r.b), '']])}>
-        <span style="width:${(r.cv / max * 100).toFixed(1)}%"></span></div>
-      <div class="r-val"><b>${esc(money(r.cv))}</b> · ${r.c} sold from ${r.q} quoted</div>`;
-  }).join('') + '</div>';
-}
-function renderBySurveyorTable(d) {
-  return table(['Surveyor', ['Quotes', 'num'], ['£ quoted', 'num'], ['Sold', 'num'], ['£ sold', 'num'], ['Installs booked', 'num'], ['£ booked', 'num']],
-    surveyorRows(d).map(r => [r.name ? esc(r.name) : NR, [String(r.q), 'num'], [esc(money(r.qv)), 'num'], [String(r.c), 'num'],
-                              [esc(money(r.cv)), 'num'], [String(r.b), 'num'], [esc(money(r.bv)), 'num']]), null, '');
+  const row = name => { const k = name || 'No salesperson'; if (!m.has(k)) m.set(k, { name: k, q: 0, qv: 0, s: 0, sv: 0 }); return m.get(k); };
+  sh.quoted.forEach(l => { const r = row(l.salesperson); r.q++; r.qv += Number(l.quote_total) || 0; });
+  sh.sold.forEach(l => { const r = row(l.salesperson); r.s++; r.sv += Number(l.quote_total) || 0; });
+  return [...m.values()].sort((a, b) => b.sv - a.sv || b.qv - a.qv);
 }
 
 function renderPipeline() {
@@ -741,19 +850,12 @@ function renderPipeline() {
     const ss = open.filter(s => groupOf(s.key) === gr);
     return { name: gr.name, color: gr.color, ink: gr.ink, count: ss.reduce((a, s) => a + s.count, 0), value: ss.reduce((a, s) => a + s.value, 0) };
   });
-  const max = Math.max(1, ...open.map(s => s.count));
-
-  html += `<div class="card">
-    <div class="pipe-head">
+  const ctx = { open, closed, openN, parts, closedN: closed.reduce((a, s) => a + s.count, 0), w1: innerWidth(1) };
+  html += `<div class="card"><div class="pipe-head">
       <div><div class="lbl">Open leads</div><div class="big">${openN.toLocaleString('en-GB')}</div></div>
       <div><div class="lbl">Quoted value of open leads</div><div class="big">${esc(money(openV))}</div></div>
-    </div>
-    <p class="hint">Every lead in Scout that isn't archived, closed or lost, however old. Tap a stage to list its jobs.</p>
-    ${segBar(parts, innerWidth(1))}
-    ${open.map(s => stageRow(s, max, groupOf(s.key).color)).join('')}
-    <div style="margin-top:12px"><button class="link" data-action="toggle" data-key="closed">${state.show.closed ? 'Hide closed jobs' : 'Show closed jobs (' + closed.reduce((a, s) => a + s.count, 0).toLocaleString('en-GB') + ')'}</button></div>
-    ${state.show.closed ? closed.map(s => stageRow(s, Math.max(1, ...closed.map(x => x.count)), 'var(--deemph)')).join('') : ''}
-  </div>`;
+    </div><p class="hint" style="margin:4px 0 0">Every lead in Scout that isn't archived, closed or lost, however old.</p></div>`;
+  html += widgetCard(WIDGETS.split, ctx) + widgetCard(WIDGETS.stages, ctx);
   return html;
 }
 function stageRow(s, max, color) {
@@ -775,16 +877,6 @@ function renderStageJobs(stage) {
     sj.rows.map(l => [jobId(l), esc(custName(l)), surveyor(l), dateShort(surveyDate(l)),
                       l.quote_sent_at ? dateShort(l.quote_sent_at) : '<span class="nr">Not sent</span>',
                       dateShort(l.created_at), [moneyOrNr(l.quote_total), 'num']]), null, 'No jobs at this stage.');
-}
-
-/* Cells are already escaped HTML. A cell given as [html, 'num'] is right-aligned */
-function table(headers, rows, totalRow, emptyText) {
-  if (!rows.length) return `<div class="empty">${esc(emptyText || 'None.')}</div>`;
-  const th = headers.map(h => Array.isArray(h) ? `<th class="${h[1]}">${esc(h[0])}</th>` : `<th>${esc(h)}</th>`).join('');
-  const tr = cells => cells.map(c => Array.isArray(c) ? `<td class="${c[1]}">${c[0]}</td>` : `<td>${c}</td>`).join('');
-  const body = rows.map(r => `<tr>${tr(r)}</tr>`).join('');
-  const tot = totalRow ? `<tr class="total">${tr(totalRow.map(c => Array.isArray(c) ? c : esc(c)))}</tr>` : '';
-  return `<div class="tbl-wrap"><table><thead><tr>${th}</tr></thead><tbody>${body}${tot}</tbody></table></div>`;
 }
 
 /* ── Tooltip: built with textContent from data attributes ── */
@@ -825,6 +917,7 @@ document.addEventListener('click', e => {
   else if (a === 'today') { state.anchor = new Date(); loadData(); }
   else if (a === 'retry-data') loadData();
   else if (a === 'retry-pipe') loadPipeline();
+  else if (a === 'view') { setView(btn.dataset.widget, btn.dataset.view); render(); }
   else if (a === 'toggle') { const k = btn.dataset.key; state.show[k] = !state.show[k]; render(); }
   else if (a === 'stage') {
     const st = btn.dataset.stage;
@@ -852,8 +945,9 @@ window.addEventListener('message', e => {
   if (msg.type !== 'HELM_USER' || !msg.user) return;
   const first = !state.user || state.user.id !== msg.user.id;
   state.user = msg.user;
-  if (first && (state.user.permitted_modules || []).includes('admin')) {
-    state.anchor = new Date(); state.openStage = null; state.stageJobs = {};
+  if (first) { state.views = {}; state.openStage = null; state.stageJobs = {}; }
+  if (first && canSee('exec')) {
+    state.anchor = new Date();
     loadData();
     loadPipeline();
   } else {
