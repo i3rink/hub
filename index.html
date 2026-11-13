@@ -294,6 +294,8 @@ function splitOf(l) {
   const pct = Number(l.split_pct) || 100;
   return pct < 100 && l.split_with ? { pct, with: l.split_with } : { pct: 100, with: null };
 }
+/* The salesperson's share in whole pounds, so the two shares always add up to the job's value */
+function splitShare(v, pct) { return pct >= 100 ? v : Math.round(v * pct / 100); }
 const SHOW_NAME = { Robert: 'Rab' };
 function personName(n) { return SHOW_NAME[n] || n; }
 function chunk(arr, size) {
@@ -919,9 +921,9 @@ function surveyorRows(sh) {
   const row = name => { const k = name ? personName(name) : 'No salesperson'; if (!m.has(k)) m.set(k, { name: k, q: 0, qv: 0, s: 0, sv: 0, shN: 0, shv: 0 }); return m.get(k); };
   sh.quoted.forEach(l => { const r = row(l.salesperson); r.q++; r.qv += val(l); });
   sh.sold.forEach(l => {
-    const sp = splitOf(l), v = val(l), r = row(l.salesperson);
-    r.s++; r.sv += v * sp.pct / 100;
-    if (sp.with) { const p = row(sp.with); p.shN++; p.shv += v * (100 - sp.pct) / 100; }
+    const sp = splitOf(l), v = val(l), r = row(l.salesperson), own = splitShare(v, sp.pct);
+    r.s++; r.sv += own;
+    if (sp.with) { const p = row(sp.with); p.shN++; p.shv += v - own; }
   });
   return [...m.values()].sort((a, b) => (b.sv + b.shv) - (a.sv + a.shv) || b.qv - a.qv);
 }
@@ -932,7 +934,7 @@ function splitJobsCard(sh, period) {
   const per = new Map();
   const add = (n, v) => per.set(n, (per.get(n) || 0) + v);
   const rows = jobs.map(l => {
-    const sp = splitOf(l), v = val(l), a = v * sp.pct / 100, b = v - a;
+    const sp = splitOf(l), v = val(l), a = splitShare(v, sp.pct), b = v - a;
     add(personName(l.salesperson || 'No salesperson'), a); add(personName(sp.with), b);
     return [dateShort(l.sold_at), jobId(l), esc(custName(l)), esc(personName(l.salesperson || '')) + ' ' + sp.pct + '%', esc(personName(sp.with)) + ' ' + (100 - sp.pct) + '%',
             [esc(money(v)), 'num'], [esc(money(a)), 'num'], [esc(money(b)), 'num']];
