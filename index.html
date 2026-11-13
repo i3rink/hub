@@ -1,4 +1,4 @@
-<!-- Hub v1.3.0 - deployed 13 Nov 2026 -->
+<!-- Hub v1.3.1 - deployed 13 Nov 2026 -->
 <!DOCTYPE html>
 <html lang="en-GB">
 <head>
@@ -169,7 +169,7 @@
    Read only. Reads Scout leads (including the sales split) and lead_activity, and Blueprint fitter's fees.
    Writes nothing except its module_versions row.
    ═══════════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v1.3.0';
+const APP_VERSION = 'v1.3.1';
 const MODULE_KEY  = 'hub';
 
 /* ── Scout project (read only) ── */
@@ -272,11 +272,13 @@ function daysBetween(a, b) {
 /* A job's value in the chosen money view. Net takes off the fitter's fee. A job with no fee in Blueprint stays gross */
 let FEES = new Map();
 function feeOf(l) { const f = l && l.job_id ? FEES.get(String(l.job_id).toUpperCase()) : undefined; return f == null ? null : Number(f); }
+/* A job with no quote value recorded (before mid-October 2026) counts as 0, never as minus its fee */
 function val(l) {
+  if (l.quote_total == null || l.quote_total === '') return 0;
   const gross = Number(l.quote_total) || 0;
   if (!state.net) return gross;
   const fee = feeOf(l);
-  return fee == null ? gross : gross - fee;
+  return fee == null ? gross : Math.max(0, gross - fee);
 }
 function sumValues(rows) {
   let total = 0, missing = 0, noFee = 0;
@@ -348,7 +350,7 @@ const state = {
   pipeError: '',
   openStage: null,
   stageJobs: {},
-  show: { closed: false, quoted: false },
+  show: { closed: false, quoted: false, soldHidden: false, soldNewest: false },
   views: {},
   hideAirtable: true,
   net: false,
@@ -875,9 +877,14 @@ function renderSales() {
   html += `<p class="data-note">${state.net ? 'Net to Annick: every £ figure here has the fitter\'s fee from Blueprint taken off.' + (noFee ? ' ' + noFee + ' job' + (noFee === 1 ? ' has' : 's have') + ' no fitter\'s fee recorded, so ' + (noFee === 1 ? 'it is' : 'they are') + ' shown gross.' : '') : 'Gross: the whole quote total, including the fitter\'s fee.'}</p>`;
   if (early || f > 0) html += `<p class="data-note">${f > 0 ? 'Charts start at the first ' + esc(d.period) + ' with data in Scout. ' : ''}${early ? 'Quote values are only recorded from mid-October 2026, so £ figures before then are low.' : ''}</p>`;
 
-  html += `<div class="card"><h2>Sold this ${esc(d.period)}: ${sh.sold.length}</h2><p class="hint">Installs booked in Scout, oldest first. Value is the last quote emailed.</p>
-    ${table(['Booked on', 'Job ID', 'Customer', 'Surveyor', 'Survey', ['Days', 'num'], 'Install date', ['Value', 'num']],
-      sh.sold.map(l => { const dd = daysBetween(surveyDate(l), l.sold_at);
+  /* The sold list can be hidden, and shown oldest or newest first */
+  const soldList = state.show.soldNewest ? sh.sold.slice().reverse() : sh.sold;
+  const soldBtns = sh.sold.length ? `<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:8px">
+      <button class="link" data-action="toggle" data-key="soldHidden">${state.show.soldHidden ? 'Show the ' + sh.sold.length + ' jobs' : 'Hide the jobs'}</button>
+      ${state.show.soldHidden ? '' : `<button class="link" data-action="toggle" data-key="soldNewest">${state.show.soldNewest ? 'Show oldest first' : 'Show newest first'}</button>`}</div>` : '';
+  html += `<div class="card"><h2>Sold this ${esc(d.period)}: ${sh.sold.length}</h2><p class="hint">Installs booked in Scout, ${state.show.soldNewest ? 'newest' : 'oldest'} first. Value is the last quote emailed.</p>
+    ${soldBtns}${state.show.soldHidden ? '' : table(['Booked on', 'Job ID', 'Customer', 'Surveyor', 'Survey', ['Days', 'num'], 'Install date', ['Value', 'num']],
+      soldList.map(l => { const dd = daysBetween(surveyDate(l), l.sold_at);
         return [dateTime(l.sold_at), jobId(l), esc(custName(l)), surveyor(l), dateShort(surveyDate(l)), [dd == null ? NR : String(dd), 'num'], dateShort(l.install_at), [l.quote_total == null ? NR : esc(money(val(l))), 'num']]; }),
       sh.sold.length ? ['Total', sh.sold.length + ' jobs', '', '', '', '', '', [esc(money(sold.total)), 'num']] : null, 'No installs booked this ' + d.period + '.')}</div>`;
 
