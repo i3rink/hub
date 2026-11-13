@@ -1,4 +1,4 @@
-<!-- Hub v1.2.1 - deployed 6 Nov 2026 -->
+<!-- Hub v1.3.0 - deployed 13 Nov 2026 -->
 <!DOCTYPE html>
 <html lang="en-GB">
 <head>
@@ -162,13 +162,14 @@
 <script>
 /* ═══════════════════════════════════════════════════════════════════
    Hub: the dashboard app for HELM. Spec: claude/hub-mi-spec.md in the HELM Troubleshooter project.
-   v1.2.0: widget framework. Each widget answers one question and offers only the chart types
+   Widget framework: each widget answers one question and offers only the chart types
    that suit its data. The chosen type is kept on the device per user.
    Views by Helm tick box: hub-exec, hub-sales, hub-office, hub-warehouse, hub-finance.
    Super admins (admin) can open every view. Only the CEO view is built so far.
-   Read only. Reads Scout leads and lead_activity. Writes nothing except its module_versions row.
+   Read only. Reads Scout leads (including the sales split) and lead_activity, and Blueprint fitter's fees.
+   Writes nothing except its module_versions row.
    ═══════════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v1.2.1';
+const APP_VERSION = 'v1.3.0';
 const MODULE_KEY  = 'hub';
 
 /* ── Scout project (read only) ── */
@@ -194,6 +195,15 @@ async function sbScout(path, opts = {}) {
   return text ? JSON.parse(text) : null;
 }
 const scoutGet = (table, qs = '') => sbScout(`${table}?${qs}`);
+
+/* ── Blueprint project (read only): the fitter's fee per job, for Net to Annick. Same source as Scout's money box ── */
+const BLUEPRINT_URL = 'https://yfijllqkgzgubvtefxhz.supabase.co';
+const BLUEPRINT_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlmaWpsbHFrZ3pndWJ2dGVmeGh6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ3MTU0NDUsImV4cCI6MjEwMDI5MTQ0NX0.A0sFRC_RZasj912f6lj8O5iZjhCUnsHGjxjJCZ9xN9M';
+async function blueprintGet(qs) {
+  const res = await fetch(`${BLUEPRINT_URL}/rest/v1/blueprint_jobs?${qs}`, { headers: { 'apikey': BLUEPRINT_KEY, 'Authorization': `Bearer ${BLUEPRINT_KEY}` } });
+  if (!res.ok) throw new Error('Blueprint ' + res.status);
+  return res.json();
+}
 
 /* ── Version reporting to Helm ── */
 fetch('https://xjnrmltfruzwmnhxplzn.supabase.co/rest/v1/module_versions', {
@@ -259,11 +269,31 @@ function daysBetween(a, b) {
   if (isNaN(ms) || ms < 0) return null;
   return Math.round(ms / 86400000);
 }
-function sumValues(rows) {
-  let total = 0, missing = 0;
-  rows.forEach(r => { if (r.quote_total == null) missing++; else total += Number(r.quote_total) || 0; });
-  return { total, missing };
+/* A job's value in the chosen money view. Net takes off the fitter's fee. A job with no fee in Blueprint stays gross */
+let FEES = new Map();
+function feeOf(l) { const f = l && l.job_id ? FEES.get(String(l.job_id).toUpperCase()) : undefined; return f == null ? null : Number(f); }
+function val(l) {
+  const gross = Number(l.quote_total) || 0;
+  if (!state.net) return gross;
+  const fee = feeOf(l);
+  return fee == null ? gross : gross - fee;
 }
+function sumValues(rows) {
+  let total = 0, missing = 0, noFee = 0;
+  rows.forEach(r => {
+    if (r.quote_total == null) { missing++; return; }
+    total += val(r);
+    if (state.net && feeOf(r) == null) noFee++;
+  });
+  return { total, missing, noFee };
+}
+/* The sale's split: the salesperson's percent and who shared it. No split recorded counts as 100% */
+function splitOf(l) {
+  const pct = Number(l.split_pct) || 100;
+  return pct < 100 && l.split_with ? { pct, with: l.split_with } : { pct: 100, with: null };
+}
+const SHOW_NAME = { Robert: 'Rab' };
+function personName(n) { return SHOW_NAME[n] || n; }
 function chunk(arr, size) {
   const out = [];
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
@@ -321,6 +351,7 @@ const state = {
   show: { closed: false, quoted: false },
   views: {},
   hideAirtable: true,
+  net: false,
 };
 
 /* ── Airtable imports. Every lead created before Scout went live (Jan to Aug 2026) carries
@@ -334,6 +365,9 @@ function loadHideAirtable() {
 function saveHideAirtable() {
   try { localStorage.setItem(prefKey('hideAirtable'), state.hideAirtable ? '1' : '0'); } catch (e) {}
 }
+/* Gross (the whole quote total) or Net to Annick (less the fitter's fee from Blueprint). Kept on this device */
+function loadNet() { try { state.net = localStorage.getItem(prefKey('net')) === '1'; } catch (e) { state.net = false; } }
+function saveNet() { try { localStorage.setItem(prefKey('net'), state.net ? '1' : '0'); } catch (e) {} }
 
 /* ── Who sees what (Helm tick boxes). Super admins can open every view ── */
 function canSee(view) {
@@ -420,7 +454,7 @@ function bucketOf(ranges, iso) {
 /* ── Data: the last 12 periods, ending with the chosen one ──
    Sold = the job's install first booked in Scout (install_confirmed note). Scout records Quote Accepted
    in the same minutes as the booking (checked 6 Nov 2026), so the booking is the sale (Neil, option A). */
-const LEAD_COLS = 'id,job_id,first_name,last_name,salesperson,status,survey_at,survey_done_at,quote_sent_at,quote_accepted_at,quote_total,install_at';
+const LEAD_COLS = 'id,job_id,first_name,last_name,salesperson,status,survey_at,survey_done_at,quote_sent_at,quote_accepted_at,quote_total,install_at,split_pct,split_with';
 const QUOTE_VALUES_FROM = new Date('2026-10-15T00:00:00');
 
 async function leadsByIds(ids) {
@@ -463,7 +497,17 @@ async function loadData() {
     const sold = (ids.length ? await leadsByIds(ids) : [])
       .map(l => ({ ...l, sold_at: firstNote.get(l.id) }))
       .sort((a, b) => new Date(a.sold_at) - new Date(b.sold_at));
+    /* Fitter's fees for every job shown, for Net to Annick. A failed read leaves every job gross */
+    const jobs = [...new Set([...(quoted || []), ...sold].map(l => l.job_id).filter(Boolean).map(j => String(j).toUpperCase()))];
+    const fees = new Map();
+    try {
+      for (const part of chunk(jobs, 60)) {
+        const rows = await blueprintGet(`select=job_id,fitting_cost&job_id=in.(${part.map(j => '"' + j.replace(/"/g, '') + '"').join(',')})`);
+        (rows || []).forEach(r => { if (r.fitting_cost != null && r.fitting_cost !== '') fees.set(String(r.job_id).toUpperCase(), r.fitting_cost); });
+      }
+    } catch (e) { console.warn('Fitter fees not read:', e.message); }
     if (seq !== state.seq) return;
+    FEES = fees;
     state.data = { period: state.period, anchor: new Date(state.anchor), ranges, quoted: quoted || [], sold };
   } catch (err) {
     if (seq !== state.seq) return;
@@ -477,8 +521,8 @@ async function loadData() {
 function shapeData(d) {
   const blank = () => Array(TREND_N).fill(0);
   const ser = { qN: blank(), qV: blank(), sN: blank(), sV: blank() };
-  d.quoted.forEach(l => { const i = bucketOf(d.ranges, l.quote_sent_at); if (i >= 0) { ser.qN[i]++; ser.qV[i] += Number(l.quote_total) || 0; } });
-  d.sold.forEach(l => { const i = bucketOf(d.ranges, l.sold_at); if (i >= 0) { ser.sN[i]++; ser.sV[i] += Number(l.quote_total) || 0; } });
+  d.quoted.forEach(l => { const i = bucketOf(d.ranges, l.quote_sent_at); if (i >= 0) { ser.qN[i]++; ser.qV[i] += val(l); } });
+  d.sold.forEach(l => { const i = bucketOf(d.ranges, l.sold_at); if (i >= 0) { ser.sN[i]++; ser.sV[i] += val(l); } });
   const cur = TREND_N - 1;
   const curR = d.ranges[cur], prevR = d.ranges[cur - 1];
   const now = Date.now();
@@ -489,7 +533,7 @@ function shapeData(d) {
   const prev = {
     qN: d.quoted.filter(l => inPrev(l.quote_sent_at)).length,
     sN: d.sold.filter(l => inPrev(l.sold_at)).length,
-    sV: d.sold.filter(l => inPrev(l.sold_at)).reduce((a, l) => a + (Number(l.quote_total) || 0), 0),
+    sV: d.sold.filter(l => inPrev(l.sold_at)).reduce((a, l) => a + val(l), 0),
   };
   /* Charts start at the first period with any data, never fewer than 3 periods */
   let first = 0;
@@ -707,17 +751,20 @@ const WIDGETS = {
   },
   surveyors: {
     id: 'surveyors', title: 'By surveyor', views: ['bars', 'columns', 'table'],
-    hint: ctx => `Sold value per salesperson this ${ctx.period}, highest first.`,
+    hint: ctx => `Sold value per salesperson this ${ctx.period}, highest first. Yellow is their share of sales split with someone else.`,
     body(view, ctx) {
       const rows = ctx.bySurveyor;
       if (!rows.length) return `<div class="empty">No quotes or sales this ${esc(ctx.period)}.</div>`;
-      if (view === 'table') return table(['Surveyor', ['Quotes', 'num'], ['£ quoted', 'num'], ['Sold', 'num'], ['£ sold', 'num'], ['Sold against quoted', 'num']],
-        rows.map(r => [esc(r.name), [String(r.q), 'num'], [esc(money(r.qv)), 'num'], [String(r.s), 'num'], [esc(money(r.sv)), 'num'],
-                       [r.qv ? Math.round(r.sv / r.qv * 100) + '%' : '<span class="nr">No quotes</span>', 'num']]), null);
-      const bars = rows.map(r => ({ name: r.name, value: r.sv,
-        text: `<b>${esc(money(r.sv))}</b> · ${r.s} sold, ${r.q} quoted`,
-        tip: [['Sold', money(r.sv), 'var(--s1)'], ['Quoted', money(r.qv), ''], ['Installs booked', String(r.s), '']] }));
-      return view === 'columns' ? vBars(bars, 'var(--s1)', ctx.w1, 220, moneyShort) : hBars(bars, 'var(--s1)');
+      if (view === 'table') return table(['Surveyor', ['Quotes', 'num'], ['£ quoted', 'num'], ['Sold', 'num'], ['£ own sales', 'num'], ['£ split share', 'num'], ['£ sold total', 'num'], ['Sold against quoted', 'num']],
+        rows.map(r => [esc(r.name), [String(r.q), 'num'], [esc(money(r.qv)), 'num'], [String(r.s) + (r.shN ? ' +' + r.shN + ' shared' : ''), 'num'],
+                       [esc(money(r.sv)), 'num'], [r.shv ? esc(money(r.shv)) : '', 'num'], [esc(money(r.sv + r.shv)), 'num'],
+                       [r.qv ? Math.round((r.sv + r.shv) / r.qv * 100) + '%' : '<span class="nr">No quotes</span>', 'num']]), null);
+      if (view === 'columns') return vBars(rows.map(r => ({ name: r.name, value: r.sv + r.shv })), 'var(--s1)', ctx.w1, 220, moneyShort);
+      const max = Math.max(1, ...rows.map(r => r.sv + r.shv));
+      return '<div class="rank">' + rows.map(r => `<div class="r-name" title="${esc(r.name)}">${esc(r.name)}</div>
+        <div class="r-track" ${tipAttr(r.name, [['Own sales', money(r.sv), 'var(--s1)'], ['Split share', money(r.shv), 'var(--s4)'], ['Quoted', money(r.qv), ''], ['Installs booked', String(r.s) + (r.shN ? ' +' + r.shN + ' shared' : ''), '']])} style="display:flex">
+          <span style="width:${(r.sv / max * 100).toFixed(1)}%;background:var(--s1);border-radius:${r.shv ? '0' : '0 4px 4px 0'}"></span>${r.shv ? `<span style="width:${(r.shv / max * 100).toFixed(1)}%;background:var(--s4);border-radius:0 4px 4px 0"></span>` : ''}</div>
+        <div class="r-val"><b>${esc(money(r.sv + r.shv))}</b>${r.shv ? ' (' + esc(money(r.shv)) + ' split)' : ''} · ${r.s} sold${r.shN ? ' +' + r.shN + ' shared' : ''}, ${r.q} quoted</div>`).join('') + '</div>';
     },
   },
   split: {
@@ -783,6 +830,9 @@ function renderSales() {
       <div class="period-label">${esc(periodLabel(p, state.anchor))}</div>
       <button class="btn" data-action="next" aria-label="Next" ${isCurrentPeriod() ? 'disabled' : ''}>&#8250;</button>
       ${isCurrentPeriod() ? '' : '<button class="btn" data-action="today">Back to now</button>'}
+      <div class="seg" style="margin-left:auto" role="group" aria-label="Money shown">
+        <button data-action="net" data-net="0" class="${state.net ? '' : 'on'}">Gross</button><button data-action="net" data-net="1" class="${state.net ? 'on' : ''}">Net to Annick</button>
+      </div>
     </div>`;
   if (state.dataError) return html + `<div class="err">Could not load the figures: ${esc(state.dataError)} <button class="btn" data-action="retry-data">Try again</button></div>`;
   const d = state.data;
@@ -792,6 +842,7 @@ function renderSales() {
   const word = compareWord(d.period, sh.inProgress);
   const sold = sumValues(sh.sold), quoted = sumValues(sh.quoted);
   const withValue = sh.sold.filter(l => l.quote_total != null);
+  const noFee = state.net ? new Set([...sh.sold, ...sh.quoted].filter(l => l.quote_total != null && feeOf(l) == null).map(l => l.job_id || l.id)).size : 0;
   const avg = withValue.length ? sold.total / withValue.length : null;
   const days = sh.sold.map(l => daysBetween(surveyDate(l), l.sold_at)).filter(x => x != null);
   const avgDays = days.length ? Math.round(days.reduce((a, x) => a + x, 0) / days.length) : null;
@@ -821,21 +872,23 @@ function renderSales() {
   };
   const early = d.ranges[f].start < QUOTE_VALUES_FROM;
   html += `<div class="grid-2">${widgetCard(WIDGETS.value, ctx)}${widgetCard(WIDGETS.sold, ctx)}</div>`;
+  html += `<p class="data-note">${state.net ? 'Net to Annick: every £ figure here has the fitter\'s fee from Blueprint taken off.' + (noFee ? ' ' + noFee + ' job' + (noFee === 1 ? ' has' : 's have') + ' no fitter\'s fee recorded, so ' + (noFee === 1 ? 'it is' : 'they are') + ' shown gross.' : '') : 'Gross: the whole quote total, including the fitter\'s fee.'}</p>`;
   if (early || f > 0) html += `<p class="data-note">${f > 0 ? 'Charts start at the first ' + esc(d.period) + ' with data in Scout. ' : ''}${early ? 'Quote values are only recorded from mid-October 2026, so £ figures before then are low.' : ''}</p>`;
 
   html += `<div class="card"><h2>Sold this ${esc(d.period)}: ${sh.sold.length}</h2><p class="hint">Installs booked in Scout, oldest first. Value is the last quote emailed.</p>
     ${table(['Booked on', 'Job ID', 'Customer', 'Surveyor', 'Survey', ['Days', 'num'], 'Install date', ['Value', 'num']],
       sh.sold.map(l => { const dd = daysBetween(surveyDate(l), l.sold_at);
-        return [dateTime(l.sold_at), jobId(l), esc(custName(l)), surveyor(l), dateShort(surveyDate(l)), [dd == null ? NR : String(dd), 'num'], dateShort(l.install_at), [moneyOrNr(l.quote_total), 'num']]; }),
+        return [dateTime(l.sold_at), jobId(l), esc(custName(l)), surveyor(l), dateShort(surveyDate(l)), [dd == null ? NR : String(dd), 'num'], dateShort(l.install_at), [l.quote_total == null ? NR : esc(money(val(l))), 'num']]; }),
       sh.sold.length ? ['Total', sh.sold.length + ' jobs', '', '', '', '', '', [esc(money(sold.total)), 'num']] : null, 'No installs booked this ' + d.period + '.')}</div>`;
 
   html += widgetCard(WIDGETS.surveyors, ctx);
+  html += splitJobsCard(sh, d.period);
 
   const qOpen = state.show.quoted;
   html += `<div class="card"><h2>Quotes sent this ${esc(d.period)}: ${sh.quoted.length}</h2><p class="hint">Jobs whose latest quote was emailed. A quote sent again moves to the newer date.</p>
     ${sh.quoted.length ? `<button class="link" data-action="toggle" data-key="quoted">${qOpen ? 'Hide the jobs' : 'Show the ' + sh.quoted.length + ' jobs'}</button>` : '<div class="empty">None.</div>'}
     ${qOpen && sh.quoted.length ? '<div style="margin-top:10px">' + table(['Sent', 'Job ID', 'Customer', 'Surveyor', 'Stage now', ['Value', 'num']],
-      sh.quoted.map(l => [dateShort(l.quote_sent_at), jobId(l), esc(custName(l)), surveyor(l), `<span class="pill">${esc(stageLabel(l.status))}</span>`, [moneyOrNr(l.quote_total), 'num']]),
+      sh.quoted.map(l => [dateShort(l.quote_sent_at), jobId(l), esc(custName(l)), surveyor(l), `<span class="pill">${esc(stageLabel(l.status))}</span>`, [l.quote_total == null ? NR : esc(money(val(l))), 'num']]),
       ['Total', sh.quoted.length + ' quotes', '', '', '', [esc(money(quoted.total)), 'num']], '') + '</div>' : ''}</div>`;
   return html + '</div>';
 }
@@ -853,12 +906,34 @@ function tile(label, value, sub, dl, spark, missing, soFar) {
     <div class="t-delta ${dl.cls}">${esc(dl.text)}</div>
     ${missing ? `<div class="t-note">${missing} with no value recorded</div>` : ''}</div>`;
 }
+/* A split sale: the salesperson keeps the count and their percent of the value. The partner gets the rest as split share */
 function surveyorRows(sh) {
   const m = new Map();
-  const row = name => { const k = name || 'No salesperson'; if (!m.has(k)) m.set(k, { name: k, q: 0, qv: 0, s: 0, sv: 0 }); return m.get(k); };
-  sh.quoted.forEach(l => { const r = row(l.salesperson); r.q++; r.qv += Number(l.quote_total) || 0; });
-  sh.sold.forEach(l => { const r = row(l.salesperson); r.s++; r.sv += Number(l.quote_total) || 0; });
-  return [...m.values()].sort((a, b) => b.sv - a.sv || b.qv - a.qv);
+  const row = name => { const k = name ? personName(name) : 'No salesperson'; if (!m.has(k)) m.set(k, { name: k, q: 0, qv: 0, s: 0, sv: 0, shN: 0, shv: 0 }); return m.get(k); };
+  sh.quoted.forEach(l => { const r = row(l.salesperson); r.q++; r.qv += val(l); });
+  sh.sold.forEach(l => {
+    const sp = splitOf(l), v = val(l), r = row(l.salesperson);
+    r.s++; r.sv += v * sp.pct / 100;
+    if (sp.with) { const p = row(sp.with); p.shN++; p.shv += v * (100 - sp.pct) / 100; }
+  });
+  return [...m.values()].sort((a, b) => (b.sv + b.shv) - (a.sv + a.shv) || b.qv - a.qv);
+}
+/* Split jobs this period, with each person's amount and a total per person */
+function splitJobsCard(sh, period) {
+  const jobs = sh.sold.filter(l => splitOf(l).with);
+  if (!jobs.length) return `<div class="card"><h2>Split jobs this ${esc(period)}: 0</h2><p class="hint">Sales shared between two salespeople, recorded when the install is booked in Scout.</p><div class="empty">No split sales this ${esc(period)}.</div></div>`;
+  const per = new Map();
+  const add = (n, v) => per.set(n, (per.get(n) || 0) + v);
+  const rows = jobs.map(l => {
+    const sp = splitOf(l), v = val(l), a = v * sp.pct / 100, b = v - a;
+    add(personName(l.salesperson || 'No salesperson'), a); add(personName(sp.with), b);
+    return [dateShort(l.sold_at), jobId(l), esc(custName(l)), esc(personName(l.salesperson || '')) + ' ' + sp.pct + '%', esc(personName(sp.with)) + ' ' + (100 - sp.pct) + '%',
+            [esc(money(v)), 'num'], [esc(money(a)), 'num'], [esc(money(b)), 'num']];
+  });
+  const totals = [...per.entries()].sort((x, y) => y[1] - x[1]).map(([n, v]) => `<span class="pill">${esc(n)} ${esc(money(v))}</span>`).join(' ');
+  return `<div class="card"><h2>Split jobs this ${esc(period)}: ${jobs.length}</h2><p class="hint">Sales shared between two salespeople, recorded when the install is booked in Scout.</p>
+    <div style="margin-bottom:10px">${totals}</div>
+    ${table(['Booked on', 'Job ID', 'Customer', 'Salesperson', 'Shared with', ['Value', 'num'], ['Salesperson £', 'num'], ['Partner £', 'num']], rows, null, '')}</div>`;
 }
 
 function renderPipeline() {
@@ -877,7 +952,7 @@ function renderPipeline() {
   const ctx = { open, closed, openN, parts, closedN: closed.reduce((a, s) => a + s.count, 0), w1: innerWidth(1) };
   html += `<div class="card"><div class="pipe-head">
       <div><div class="lbl">Open leads</div><div class="big">${openN.toLocaleString('en-GB')}</div></div>
-      <div><div class="lbl">Quoted value of open leads</div><div class="big">${esc(money(openV))}</div></div>
+      <div><div class="lbl">Quoted value of open leads (gross)</div><div class="big">${esc(money(openV))}</div></div>
     </div><p class="hint" style="margin:4px 0 8px">Every lead in Scout that isn't archived, closed or lost${state.hideAirtable ? ', created since Scout went live in August 2026' : ', including leads imported from Airtable'}.</p>
     <label class="switch"><input type="checkbox" data-action="airtable" ${state.hideAirtable ? 'checked' : ''}/>
       <span>Hide Airtable imports</span><em>${p.importedOpen.toLocaleString('en-GB')} open leads from January to August 2026</em></label></div>`;
@@ -949,6 +1024,7 @@ document.addEventListener('click', e => {
     shapePipeline(); render(); return;
   }
   else if (a === 'view') { setView(btn.dataset.widget, btn.dataset.view); render(); }
+  else if (a === 'net') { state.net = btn.dataset.net === '1'; saveNet(); render(); }
   else if (a === 'toggle') { const k = btn.dataset.key; state.show[k] = !state.show[k]; render(); }
   else if (a === 'stage') {
     const st = btn.dataset.stage;
@@ -976,7 +1052,7 @@ window.addEventListener('message', e => {
   if (msg.type !== 'HELM_USER' || !msg.user) return;
   const first = !state.user || state.user.id !== msg.user.id;
   state.user = msg.user;
-  if (first) { state.views = {}; state.openStage = null; state.stageJobs = {}; loadHideAirtable(); }
+  if (first) { state.views = {}; state.openStage = null; state.stageJobs = {}; loadHideAirtable(); loadNet(); }
   if (first && canSee('exec')) {
     state.anchor = new Date();
     loadData();
