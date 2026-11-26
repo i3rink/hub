@@ -1,4 +1,4 @@
-<!-- Hub v1.3.1 - deployed 13 Nov 2026 -->
+<!-- Hub v1.3.2 - deployed 26 Nov 2026 -->
 <!DOCTYPE html>
 <html lang="en-GB">
 <head>
@@ -169,19 +169,48 @@
    Read only. Reads Scout leads (including the sales split) and lead_activity, and Blueprint fitter's fees.
    Writes nothing except its module_versions row.
    ═══════════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v1.3.1';
+const APP_VERSION = 'v1.3.2';
 const MODULE_KEY  = 'hub';
 
 /* ── Scout project (read only) ── */
 const SCOUT_URL = 'https://vrujksjomkvbgwxbywzx.supabase.co';
 const SCOUT_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZydWprc2pvbWt2Ymd3eGJ5d3p4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUyNTAxODUsImV4cCI6MjEwMDgyNjE4NX0.WAnLBFU7YXfJWHe6k_WjQzszMEgAJP0UbzuAim43GP4';
 
+/* ── Signed-in passes from Helm (security Tier 2, decision 3A) ──
+   Helm hands Hub a pass for Scout, Blueprint and Helm beside the user in HELM_USER, and fresh ones in HELM_PASSES.
+   Each read sends the pass as the Bearer with the public key as apikey. A refused pass (401 or 403) is tried once
+   more with the public key, so nothing stops working before that table is locked, and a 401 asks Helm for fresh
+   passes (at most once a minute). Passes are kept in memory only, never saved on the device */
+const passes = { keys: null, expires: 0, askedAt: 0 };
+function takePasses(p, expiresAt) {
+  passes.keys = p && typeof p === 'object' ? p : null;
+  const t = expiresAt ? Date.parse(expiresAt) : 0;
+  passes.expires = isNaN(t) ? 0 : t;
+}
+function passFor(project) {
+  const p = passes.keys && passes.keys[project];
+  return p && passes.expires - Date.now() > 30000 ? p : null;
+}
+function askHelmForPasses() {
+  if (Date.now() - passes.askedAt < 60000) return;
+  passes.askedAt = Date.now();
+  try { window.parent.postMessage({ type: 'HELM_PASSES_NEEDED' }, 'https://i3rink.github.io'); } catch (e) {}
+}
+async function passFetch(project, anonKey, url, init = {}) {
+  const go = bearer => fetch(url, { ...init, headers: { ...(init.headers || {}), 'apikey': anonKey, 'Authorization': `Bearer ${bearer}` } });
+  const pass = passFor(project);
+  if (!pass) return go(anonKey);
+  const res = await go(pass);
+  if (res.status !== 401 && res.status !== 403) return res;
+  console.warn(`Pass refused (${res.status}) on ${project} ${url.split('/rest/v1/')[1].split('?')[0]}, used the public key`);
+  if (res.status === 401) askHelmForPasses();
+  return go(anonKey);
+}
+
 async function sbScout(path, opts = {}) {
   const { prefer, ...fetchOpts } = opts;
-  const res = await fetch(`${SCOUT_URL}/rest/v1/${path}`, {
+  const res = await passFetch('scout', SCOUT_KEY, `${SCOUT_URL}/rest/v1/${path}`, {
     headers: {
-      'apikey': SCOUT_KEY,
-      'Authorization': `Bearer ${SCOUT_KEY}`,
       'Content-Type': 'application/json',
       ...(prefer ? { 'Prefer': prefer } : {}),
     },
@@ -200,7 +229,7 @@ const scoutGet = (table, qs = '') => sbScout(`${table}?${qs}`);
 const BLUEPRINT_URL = 'https://yfijllqkgzgubvtefxhz.supabase.co';
 const BLUEPRINT_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlmaWpsbHFrZ3pndWJ2dGVmeGh6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ3MTU0NDUsImV4cCI6MjEwMDI5MTQ0NX0.A0sFRC_RZasj912f6lj8O5iZjhCUnsHGjxjJCZ9xN9M';
 async function blueprintGet(qs) {
-  const res = await fetch(`${BLUEPRINT_URL}/rest/v1/blueprint_jobs?${qs}`, { headers: { 'apikey': BLUEPRINT_KEY, 'Authorization': `Bearer ${BLUEPRINT_KEY}` } });
+  const res = await passFetch('blueprint', BLUEPRINT_KEY, `${BLUEPRINT_URL}/rest/v1/blueprint_jobs?${qs}`);
   if (!res.ok) throw new Error('Blueprint ' + res.status);
   return res.json();
 }
@@ -1058,7 +1087,9 @@ window.addEventListener('popstate', () => {
 window.addEventListener('message', e => {
   if (e.origin !== 'https://i3rink.github.io') return;
   const msg = e.data || {};
+  if (msg.type === 'HELM_PASSES') { takePasses(msg.passes, msg.passes_expire_at); return; }
   if (msg.type !== 'HELM_USER' || !msg.user) return;
+  takePasses(msg.passes, msg.passes_expire_at);
   const first = !state.user || state.user.id !== msg.user.id;
   state.user = msg.user;
   if (first) { state.views = {}; state.openStage = null; state.stageJobs = {}; loadHideAirtable(); loadNet(); }
